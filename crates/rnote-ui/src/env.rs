@@ -122,13 +122,34 @@ pub(crate) fn setup_env() -> anyhow::Result<()> {
             let data_dir = data_dir()?;
             let resources_dir = exec_parent_dir()?.canonicalize()?.join("../Resources");
 
+            // Build search paths for XDG_DATA_DIRS including app resources and Homebrew/system dirs
+            let mut dirs = vec![data_dir.to_string_lossy().to_string()];
+            if let Ok(existing) = std::env::var("XDG_DATA_DIRS") {
+                for dir in existing.split(':') {
+                    if !dir.is_empty() && !dirs.iter().any(|d| d == dir) {
+                        dirs.push(dir.to_string());
+                    }
+                }
+            }
+            for fallback in ["/opt/homebrew/share", "/usr/local/share", "/usr/share"] {
+                if !dirs.iter().any(|d| d == fallback) {
+                    dirs.push(fallback.to_string());
+                }
+            }
+
             // SAFETY: this setup only happens while still being single-threaded
             unsafe {
-                std::env::set_var("XDG_DATA_DIRS", data_dir);
-                std::env::set_var(
-                    "GDK_PIXBUF_MODULE_FILE",
-                    resources_dir.join("etc/loaders.cache"),
-                );
+                std::env::set_var("XDG_DATA_DIRS", dirs.join(":"));
+
+                let bundled_cache = resources_dir.join("etc/loaders.cache");
+                if bundled_cache.exists() {
+                    std::env::set_var("GDK_PIXBUF_MODULE_FILE", bundled_cache);
+                } else if std::path::Path::new("/opt/homebrew/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache").exists() {
+                    std::env::set_var(
+                        "GDK_PIXBUF_MODULE_FILE",
+                        "/opt/homebrew/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache",
+                    );
+                }
             }
         }
     }

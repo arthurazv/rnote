@@ -72,7 +72,16 @@ jobs:
 
           # Copy Resources & GSettings
           cp -r /tmp/rnote_install/share/* "$APP_DIR/Contents/Resources/share/"
+          # Copy GTK4 and GNOME schemas to make bundle self-contained
+          cp /opt/homebrew/share/glib-2.0/schemas/org.gtk* "$APP_DIR/Contents/Resources/share/glib-2.0/schemas/" 2>/dev/null || true
+          cp /opt/homebrew/share/glib-2.0/schemas/org.gnome* "$APP_DIR/Contents/Resources/share/glib-2.0/schemas/" 2>/dev/null || true
           glib-compile-schemas "$APP_DIR/Contents/Resources/share/glib-2.0/schemas" 2>/dev/null || true
+
+          # Create loaders.cache for gdk-pixbuf (SVG and image loading)
+          mkdir -p "$APP_DIR/Contents/Resources/etc"
+          if [ -f /opt/homebrew/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache ]; then
+            cp /opt/homebrew/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache "$APP_DIR/Contents/Resources/etc/loaders.cache"
+          fi
 
           # Create Info.plist
           cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
