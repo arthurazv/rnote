@@ -29,7 +29,7 @@ pub enum Layout {
 
 impl Default for Layout {
     fn default() -> Self {
-        Self::Infinite
+        Self::ContinuousVertical
     }
 }
 

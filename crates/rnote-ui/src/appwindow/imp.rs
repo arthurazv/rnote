@@ -142,6 +142,18 @@ impl ObjectImpl for RnAppWindow {
             );
         }
 
+        #[cfg(target_os = "macos")]
+        {
+            let css = CssProvider::new();
+            css.load_from_string(&include_str!("../../data/style-mac.css"));
+            let display = gdk::Display::default().unwrap();
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &css,
+                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
+
         self.setup_input();
         self.setup_overview();
         self.setup_split_view();

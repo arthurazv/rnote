@@ -1,0 +1,102 @@
+name: Build macOS Application
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    name: Build macOS DMG (Apple Silicon)
+    runs-on: macos-14
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          brew update
+          brew install meson ninja pkg-config gtk4 libadwaita librsvg gettext
+          echo "/opt/homebrew/opt/gettext/bin" >> $GITHUB_PATH
+          echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/libadwaita/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.89
+
+      - name: Configure Meson Build
+        run: |
+          meson setup _build \
+            --prefix=/tmp/rnote_install \
+            -Dprofile=default \
+            -Dci=true
+
+      - name: Compile Rnote
+        run: |
+          ninja -C _build
+
+      - name: Install to Staging Directory
+        run: |
+          ninja -C _build install
+
+      - name: Package macOS .app and .dmg
+        run: |
+          APP_DIR="_build/Rnote.app"
+          mkdir -p "$APP_DIR/Contents/MacOS"
+          mkdir -p "$APP_DIR/Contents/Resources/share"
+          
+          # Copy binaries
+          cp /tmp/rnote_install/bin/rnote "$APP_DIR/Contents/MacOS/Rnote"
+          if [ -f /tmp/rnote_install/bin/rnote-cli ]; then
+            cp /tmp/rnote_install/bin/rnote-cli "$APP_DIR/Contents/MacOS/rnote-cli"
+          fi
+
+          # Copy Resources & GSettings
+          cp -r /tmp/rnote_install/share/* "$APP_DIR/Contents/Resources/share/"
+          glib-compile-schemas "$APP_DIR/Contents/Resources/share/glib-2.0/schemas" 2>/dev/null || true
+
+          # Create Info.plist
+          cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.github.flxzt.rnote</string>
+              <key>CFBundleName</key>
+              <string>Rnote</string>
+              <key>CFBundleDisplayName</key>
+              <string>Rnote</string>
+              <key>CFBundleExecutable</key>
+              <string>Rnote</string>
+              <key>CFBundleVersion</key>
+              <string>0.15.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>0.15.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>NSRequiresAquaSystemAppearance</key>
+              <false/>
+          </dict>
+          </plist>
+          EOF
+
+          # Create DMG
+          mkdir -p _dmg
+          cp -r "$APP_DIR" _dmg/
+          hdiutil create -volname "Rnote" -srcfolder _dmg -ov -format UDZO _build/Rnote-macOS-AppleSilicon.dmg
+
+      - name: Upload DMG Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rnote-macOS-AppleSilicon-DMG
+          path: _build/Rnote-macOS-AppleSilicon.dmg
+          if-no-files-found: error

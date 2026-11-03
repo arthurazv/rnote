@@ -38,7 +38,7 @@ pub enum PatternStyle {
 
 impl Default for PatternStyle {
     fn default() -> Self {
-        Self::Dots
+        Self::Grid
     }
 }
 

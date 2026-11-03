@@ -36,7 +36,7 @@ pub enum PredefinedFormat {
 
 impl Default for PredefinedFormat {
     fn default() -> Self {
-        Self::A3
+        Self::A4
     }
 }
 

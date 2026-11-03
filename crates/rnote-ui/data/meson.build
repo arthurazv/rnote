@@ -380,6 +380,7 @@ rnote_ui_gresources_ui_files = files(
 rnote_css_style = files(
     'style.css',
     'style-win.css',
+    'style-mac.css',
 )
 
 rnote_ui_data_files = [

@@ -1,0 +1,22 @@
+/* macOS-specific theme and typography refinements for Rnote */
+
+* {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+}
+
+/* Ensure proper titlebar padding for macOS window traffic lights (close/min/max) */
+window:not(.fullscreen) headerbar > windowhandle > box > box.start {
+    margin-left: 64px;
+}
+
+/* Rounded, native-feeling popovers and dialogs */
+popover contents {
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+/* Clean tabs matching macOS aesthetics */
+tabbar tab {
+    padding: 6px 14px;
+    border-radius: 8px;
+}
