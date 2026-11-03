@@ -221,11 +221,12 @@ if build_ui == true
         app_name,
     )
 
+    is_darwin = host_machine.system() == 'darwin'
     gnome.post_install(
         glib_compile_schemas: true,
         gtk_update_icon_cache: true,
-        update_desktop_database: true,
-        update_mime_database: true,
+        update_desktop_database: not is_darwin,
+        update_mime_database: not is_darwin,
     )
 
     # Windows installer
