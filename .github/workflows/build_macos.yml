@@ -7,6 +7,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  CARGO_TERM_COLOR: always
+
 jobs:
   build-macos:
     name: Build macOS DMG (Apple Silicon)
@@ -18,17 +23,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install System Dependencies
+      - name: Install System Dependencies via Homebrew
         run: |
-          brew update
-          brew install meson ninja pkg-config gtk4 libadwaita librsvg gettext
+          brew install libadwaita librsvg appstream
           echo "/opt/homebrew/opt/gettext/bin" >> $GITHUB_PATH
           echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/libadwaita/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
-      - name: Install Rust toolchain
+      - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.89
 
       - name: Configure Meson Build
         run: |
