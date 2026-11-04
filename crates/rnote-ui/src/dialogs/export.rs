@@ -23,7 +23,7 @@ pub(crate) async fn dialog_save_doc_as(appwindow: &RnAppWindow, canvas: &RnCanva
     // See the limitations on FileChooserNative
     // https://gtk-rs.org/gtk3-rs/stable/latest/docs/gtk/struct.FileChooserNative.html#win32-details--gtkfilechooserdialognative-win32
     let filter = FileFilter::new();
-    if cfg!(target_os = "windows") {
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
         filter.add_pattern("*.rnote");
     } else {
         filter.add_mime_type("application/rnote");
@@ -357,7 +357,7 @@ fn create_filedialog_export_doc(
     // https://gtk-rs.org/gtk3-rs/stable/latest/docs/gtk/struct.FileChooserNative.html#win32-details--gtkfilechooserdialognative-win32
     match doc_export_prefs.export_format {
         DocExportFormat::Svg => {
-            if cfg!(target_os = "windows") {
+            if cfg!(any(target_os = "windows", target_os = "macos")) {
                 filter.add_pattern("*.svg");
             } else {
                 filter.add_mime_type("image/svg+xml");
@@ -368,7 +368,7 @@ fn create_filedialog_export_doc(
             filter.set_name(Some(&gettext("Svg")));
         }
         DocExportFormat::Pdf => {
-            if cfg!(target_os = "windows") {
+            if cfg!(any(target_os = "windows", target_os = "macos")) {
                 filter.add_pattern("*.pdf");
             } else {
                 filter.add_mime_type("application/pdf");
@@ -379,7 +379,7 @@ fn create_filedialog_export_doc(
             filter.set_name(Some(&gettext("Pdf")));
         }
         DocExportFormat::Xopp => {
-            if cfg!(target_os = "windows") {
+            if cfg!(any(target_os = "windows", target_os = "macos")) {
                 filter.add_pattern("*.xopp");
             } else {
                 filter.add_mime_type("application/x-xopp");
@@ -782,7 +782,7 @@ fn create_filedialog_export_doc_pages(
     filter.add_mime_type("inode/directory");
     match doc_pages_export_prefs.export_format {
         DocPagesExportFormat::Svg => {
-            if cfg!(target_os = "windows") {
+            if cfg!(any(target_os = "windows", target_os = "macos")) {
                 filter.add_pattern("*.svg");
             } else {
                 filter.add_mime_type("image/svg+xml");
@@ -793,7 +793,7 @@ fn create_filedialog_export_doc_pages(
             filter.set_name(Some(&gettext("Svg")));
         }
         DocPagesExportFormat::Png => {
-            if cfg!(target_os = "windows") {
+            if cfg!(any(target_os = "windows", target_os = "macos")) {
                 filter.add_pattern("*.png");
             } else {
                 filter.add_mime_type("image/png");
@@ -804,7 +804,7 @@ fn create_filedialog_export_doc_pages(
             filter.set_name(Some(&gettext("Png")));
         }
         DocPagesExportFormat::Jpeg => {
-            if cfg!(target_os = "windows") {
+            if cfg!(any(target_os = "windows", target_os = "macos")) {
                 filter.add_pattern("*.jpg");
                 filter.add_pattern("*.jpeg");
             } else {
@@ -1175,7 +1175,7 @@ fn create_filedialog_export_selection(
     // https://gtk-rs.org/gtk3-rs/stable/latest/docs/gtk/struct.FileChooserNative.html#win32-details--gtkfilechooserdialognative-win32
     match selection_export_prefs.export_format {
         SelectionExportFormat::Svg => {
-            if cfg!(target_os = "windows") {
+            if cfg!(any(target_os = "windows", target_os = "macos")) {
                 filter.add_pattern("*.svg");
             } else {
                 filter.add_mime_type("image/svg+xml");
@@ -1186,7 +1186,7 @@ fn create_filedialog_export_selection(
             filter.set_name(Some(&gettext("Svg")));
         }
         SelectionExportFormat::Png => {
-            if cfg!(target_os = "windows") {
+            if cfg!(any(target_os = "windows", target_os = "macos")) {
                 filter.add_pattern("*.png");
             } else {
                 filter.add_mime_type("image/png");
@@ -1197,7 +1197,7 @@ fn create_filedialog_export_selection(
             filter.set_name(Some(&gettext("Png")));
         }
         SelectionExportFormat::Jpeg => {
-            if cfg!(target_os = "windows") {
+            if cfg!(any(target_os = "windows", target_os = "macos")) {
                 filter.add_pattern("*.jpg");
                 filter.add_pattern("*.jpeg");
             } else {
@@ -1232,7 +1232,7 @@ pub(crate) async fn filechooser_export_engine_state(appwindow: &RnAppWindow, can
     // note : mimetypes are not supported with the native file picker on windows
     // See the limitations on FileChooserNative
     // https://gtk-rs.org/gtk3-rs/stable/latest/docs/gtk/struct.FileChooserNative.html#win32-details--gtkfilechooserdialognative-win32
-    if cfg!(target_os = "windows") {
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
         filter.add_pattern("*.json");
     } else {
         filter.add_mime_type("application/json");
@@ -1293,7 +1293,7 @@ pub(crate) async fn filechooser_export_engine_config(appwindow: &RnAppWindow, ca
     // note : mimetypes are not supported with the native file picker on windows
     // See the limitations on FileChooserNative
     // https://gtk-rs.org/gtk3-rs/stable/latest/docs/gtk/struct.FileChooserNative.html#win32-details--gtkfilechooserdialognative-win32
-    if cfg!(target_os = "windows") {
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
         filter.add_pattern("*.json");
     } else {
         filter.add_mime_type("application/json");

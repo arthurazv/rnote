@@ -22,7 +22,7 @@ pub(crate) async fn filedialog_open_doc(appwindow: &RnAppWindow) {
     // note : mimetypes are not supported with the native file picker on windows
     // See the limitations on FileChooserNative
     // https://gtk-rs.org/gtk3-rs/stable/latest/docs/gtk/struct.FileChooserNative.html#win32-details--gtkfilechooserdialognative-win32
-    if cfg!(target_os = "windows") {
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
         filter.add_pattern("*.rnote");
     } else {
         filter.add_mime_type("application/rnote");
@@ -62,11 +62,12 @@ pub(crate) async fn filedialog_import_file(appwindow: &RnAppWindow) {
     // note : mimetypes are not supported with the native file picker on windows
     // See the limitations on FileChooserNative
     // https://gtk-rs.org/gtk3-rs/stable/latest/docs/gtk/struct.FileChooserNative.html#win32-details--gtkfilechooserdialognative-win32
-    if cfg!(target_os = "windows") {
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
         filter.add_pattern("*.xopp");
         filter.add_pattern("*.pdf");
         filter.add_pattern("*.svg");
         filter.add_pattern("*.png");
+        filter.add_pattern("*.jpg");
         filter.add_pattern("*.jpeg");
         filter.add_pattern("*.txt");
     } else {

@@ -269,6 +269,7 @@ impl RnCanvas {
             // first time or saving as another filename, until the subsequent save at least.
             self.set_output_file_expect_write(false);
         }
+        gtk4::RecentManager::default().add_item(&file.uri());
         self.set_unsaved_changes(false);
         self.set_save_in_progress(false);
 

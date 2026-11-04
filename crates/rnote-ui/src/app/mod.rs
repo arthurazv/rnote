@@ -69,23 +69,44 @@ mod imp {
         fn open(&self, files: &[gio::File], hint: &str) {
             self.parent_open(files, hint);
 
-            let input_file = files.first().cloned();
+            if files.is_empty() {
+                return;
+            }
+
             if let Some(appwindow) = self
                 .obj()
                 .active_window()
                 .map(|w| w.downcast::<RnAppWindow>().unwrap())
             {
-                if let Some(input_file) = input_file {
+                let files = files.to_vec();
+                glib::spawn_future_local(clone!(
+                    #[weak]
+                    appwindow,
+                    async move {
+                        for file in files {
+                            appwindow.open_file_w_dialogs(file, None, true).await;
+                        }
+                    }
+                ));
+            } else {
+                let first_file = files.first().cloned();
+                let remaining_files = if files.len() > 1 {
+                    files[1..].to_vec()
+                } else {
+                    Vec::new()
+                };
+                let appwindow = self.new_appwindow_init_show(first_file);
+                if !remaining_files.is_empty() {
                     glib::spawn_future_local(clone!(
                         #[weak]
                         appwindow,
                         async move {
-                            appwindow.open_file_w_dialogs(input_file, None, true).await;
+                            for file in remaining_files {
+                                appwindow.open_file_w_dialogs(file, None, true).await;
+                            }
                         }
                     ));
                 }
-            } else {
-                self.new_appwindow_init_show(input_file);
             }
         }
     }
@@ -132,7 +153,7 @@ mod imp {
         }
 
         /// Initializes and shows a new app window
-        pub(crate) fn new_appwindow_init_show(&self, input_file: Option<gio::File>) {
+        pub(crate) fn new_appwindow_init_show(&self, input_file: Option<gio::File>) -> RnAppWindow {
             let appwindow = RnAppWindow::new(self.obj().upcast_ref::<gtk4::Application>());
             appwindow.init(true);
             // create a window group for each app window
@@ -154,6 +175,8 @@ mod imp {
                     }
                 ));
             }
+
+            appwindow
         }
 
         pub(crate) fn new_appwindow_init_return_tab(&self) -> adw::TabView {
@@ -206,8 +229,8 @@ impl RnApp {
         self.app_settings().is_some()
     }
 
-    pub(crate) fn new_appwindow_init_show(&self) {
-        self.imp().new_appwindow_init_show(None);
+    pub(crate) fn new_appwindow_init_show(&self) -> RnAppWindow {
+        self.imp().new_appwindow_init_show(None)
     }
 
     pub(crate) fn new_appwindow_init_return_tab(&self) -> adw::TabView {

@@ -83,6 +83,10 @@ jobs:
             cp /opt/homebrew/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache "$APP_DIR/Contents/Resources/etc/loaders.cache"
           fi
 
+          # Copy macOS native icons
+          cp build-aux/macos/Rnote.icns "$APP_DIR/Contents/Resources/Rnote.icns"
+          cp build-aux/macos/RnoteDoc.icns "$APP_DIR/Contents/Resources/RnoteDoc.icns"
+
           # Create Info.plist
           cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
           <?xml version="1.0" encoding="UTF-8"?>
@@ -99,6 +103,8 @@ jobs:
               <string>Rnote</string>
               <key>CFBundleExecutable</key>
               <string>Rnote</string>
+              <key>CFBundleIconFile</key>
+              <string>Rnote</string>
               <key>CFBundleVersion</key>
               <string>0.15.0</string>
               <key>CFBundleShortVersionString</key>
@@ -107,6 +113,54 @@ jobs:
               <true/>
               <key>NSRequiresAquaSystemAppearance</key>
               <false/>
+              <key>CFBundleDocumentTypes</key>
+              <array>
+                  <dict>
+                      <key>CFBundleTypeName</key>
+                      <string>Rnote Document</string>
+                      <key>CFBundleTypeRole</key>
+                      <string>Editor</string>
+                      <key>LSHandlerRank</key>
+                      <string>Owner</string>
+                      <key>LSItemContentTypes</key>
+                      <array>
+                          <string>com.github.flxzt.rnote.document</string>
+                      </array>
+                      <key>CFBundleTypeIconFile</key>
+                      <string>RnoteDoc</string>
+                      <key>CFBundleTypeExtensions</key>
+                      <array>
+                          <string>rnote</string>
+                      </array>
+                  </dict>
+              </array>
+              <key>UTExportedTypeDeclarations</key>
+              <array>
+                  <dict>
+                      <key>UTTypeIdentifier</key>
+                      <string>com.github.flxzt.rnote.document</string>
+                      <key>UTTypeDescription</key>
+                      <string>Rnote Document</string>
+                      <key>UTTypeConformsTo</key>
+                      <array>
+                          <string>public.data</string>
+                          <string>public.content</string>
+                      </array>
+                      <key>UTTypeIconFile</key>
+                      <string>RnoteDoc</string>
+                      <key>UTTypeTagSpecification</key>
+                      <dict>
+                          <key>public.filename-extension</key>
+                          <array>
+                              <string>rnote</string>
+                          </array>
+                          <key>public.mime-type</key>
+                          <array>
+                              <string>application/rnote</string>
+                          </array>
+                      </dict>
+                  </dict>
+              </array>
           </dict>
           </plist>
           EOF
