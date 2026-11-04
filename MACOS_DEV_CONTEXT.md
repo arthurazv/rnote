@@ -34,6 +34,15 @@ Este documento consolida o diagnóstico técnico completo, os arquivos alterados
 - `canvas/mod.rs`: removida chamada redundante de `queue_resize()` em `configure_adjustments()`.
 - `canvaswrapper.rs`: suporte a `Cmd + Scroll` adicionando `SUPER_MASK` e `META_MASK`, e `queue_resize()` apenas no encerramento do gesto (`connect_end`/`connect_cancel`).
 
+### E. Integração Nativa com o Sistema de Arquivos do macOS
+- **Filtros de Extensão (`NSSavePanel` / `NSOpenPanel`):** No backend macOS do GTK 4, o diálogo de arquivos mapeia para as janelas nativas do AppKit, que ignoram MIME types de Linux (`application/rnote`, `image/svg+xml`). Ajustados todos os seletores em `dialogs/export.rs` e `dialogs/import.rs` para utilizar `filter.add_pattern("*.ext")` e `filter.add_suffix("ext")`.
+- **Abertura Multi-Arquivo no Finder:** Em `app/mod.rs`, implementada iteração de `files` no evento `open` do `GtkApplication`, permitindo selecionar múltiplos documentos `.rnote` no Finder ou abri-los via CLI em abas individuais simultâneas.
+- **Histórico Nativo (Open Recent):** Integração com `gtk4::RecentManager` em `appwindow/mod.rs` e `canvas/imexport.rs` ao abrir ou salvar documentos.
+- **Associação de Documentos e Ícones Retina Apple:**
+  - Gerados ícones de alta resolução Apple Retina (`Rnote.icns` e `RnoteDoc.icns` em `build-aux/macos/`) a partir dos vetores SVG originais via `rsvg-convert` e `iconutil`.
+  - Configurado `Info.plist` com `CFBundleDocumentTypes`, `LSHandlerRank` como `Owner` e `UTExportedTypeDeclarations` para o UTI `com.github.flxzt.rnote.document`.
+  - Registrado automaticamente com o LaunchServices do macOS (`lsregister`).
+
 ---
 
 ## 3. Modificações Implementadas
@@ -44,13 +53,32 @@ Este documento consolida o diagnóstico técnico completo, os arquivos alterados
 
 2. `crates/rnote-ui/src/app/mod.rs`:
    - Invocado `obj.setup_macos_menubar()` no `startup(&self)`.
+   - Suporte a múltiplos arquivos no método `open(&self, files: &[gio::File], hint: &str)`.
 
 3. `crates/rnote-ui/src/appwindow/actions.rs`:
    - Atualizada a lista de aceleradores em `setup_action_accels` adicionando `<Meta>` em todas as ações (`win.undo`, `win.redo`, `win.clipboard-*`, `win.save-doc`, etc.).
 
-4. `crates/rnote-ui/data/style-mac.css`:
+4. `crates/rnote-ui/src/appwindow/mod.rs` & `crates/rnote-ui/src/canvas/mod.rs`:
+   - Otimização de fluidez no zoom e pinch-to-zoom (evitando `queue_resize()` contínuo em 120Hz).
+   - Registro de arquivos abertos no `gtk4::RecentManager`.
+
+5. `crates/rnote-ui/src/canvas/imexport.rs`:
+   - Registro de arquivos salvos no `gtk4::RecentManager`.
+
+6. `crates/rnote-ui/src/dialogs/export.rs` & `crates/rnote-ui/src/dialogs/import.rs`:
+   - Filtros de arquivos compatíveis com o AppKit nativo do macOS (`*.rnote`, `*.svg`, `*.pdf`, `*.png`, etc.).
+
+7. `crates/rnote-ui/data/style-mac.css`:
    - Corrigido o padding do headerbar (`padding-left: 78px;`).
 
-5. **Deploy:**
-   - Compilado via GitHub Actions (Run ID `41752017042`).
-   - Binário e recursos instalados em `/Applications/Rnote.app`.
+8. `build-aux/macos/`:
+   - `Rnote.icns` e `RnoteDoc.icns` nativos Retina.
+   - Script gerador `generate_icons.py`.
+
+9. `.github/workflows/build_macos.yml`:
+   - Empacotamento dos ícones `.icns` em `Contents/Resources/`.
+   - Inclusão das definições `CFBundleDocumentTypes` e `UTExportedTypeDeclarations` no `Info.plist`.
+
+10. **Deploy:**
+    - Compilado via GitHub Actions (Run ID `41921964846`).
+    - Binário, recursos e associações instalados e ativos em `/Applications/Rnote.app`.
