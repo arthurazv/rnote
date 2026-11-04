@@ -28,6 +28,12 @@ Este documento consolida o diagnóstico técnico completo, os arquivos alterados
 ### C. Espaçamento dos botões da janela (Traffic Lights)
 - Ajuste necessário em `crates/rnote-ui/data/style-mac.css` adicionando `padding-left: 78px;` no seletor `window:not(.fullscreen) headerbar` para evitar sobreposição dos botões fechar/minimizar/expandir.
 
+### D. Otimização de Fluidez no Pinch-to-Zoom (Trackpad)
+- Eliminado o reflow de layout e re-alocação de memória a cada evento de pinça a 120Hz.
+- `appwindow/mod.rs`: `zoomed_temporarily` agora aciona diretamente `canvas.queue_draw()`, aproveitando a matriz de transformação do GSK via GPU (Metal) sem sobrecarregar a thread principal.
+- `canvas/mod.rs`: removida chamada redundante de `queue_resize()` em `configure_adjustments()`.
+- `canvaswrapper.rs`: suporte a `Cmd + Scroll` adicionando `SUPER_MASK` e `META_MASK`, e `queue_resize()` apenas no encerramento do gesto (`connect_end`/`connect_cancel`).
+
 ---
 
 ## 3. Modificações Implementadas
