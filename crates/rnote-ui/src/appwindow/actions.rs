@@ -1303,7 +1303,7 @@ impl RnAppWindow {
 
         // Order matters here, we want to go from specific -> generic, mostly because `text/plain` is contained in other text based formats
         if content_formats.contain_mime_type("text/uri-list")
-            || content_formats.contain_type(gdk::FileList::static_type())
+            || content_formats.contains_type(gdk::FileList::static_type())
         {
             glib::spawn_future_local(clone!(
                 #[weak(rename_to=appwindow)]
@@ -1311,7 +1311,7 @@ impl RnAppWindow {
                 async move {
                     debug!("Recognized clipboard content format: files list");
 
-                    if content_formats.contain_type(gdk::FileList::static_type()) {
+                    if content_formats.contains_type(gdk::FileList::static_type()) {
                         match appwindow
                             .clipboard()
                             .read_value_future(
@@ -1513,7 +1513,7 @@ impl RnAppWindow {
             || content_formats.contain_mime_type("image/jpg")
             || content_formats.contain_mime_type("image/tiff")
             || content_formats.contain_mime_type("image/bmp")
-            || content_formats.contain_type(gdk::Texture::static_type())
+            || content_formats.contains_type(gdk::Texture::static_type())
         {
             let mime_type = [
                 "image/png",

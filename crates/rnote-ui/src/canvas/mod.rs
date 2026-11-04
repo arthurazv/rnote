@@ -1447,8 +1447,8 @@ impl RnCanvas {
                             glib::spawn_future_local(clone!(
                                 #[weak]
                                 appwindow,
-                                #[weak(rename_to=canvas)]
-                                self,
+                                #[weak]
+                                canvas,
                                 async move {
                                     if let Err(e) = canvas
                                         .load_in_bitmapimage_bytes(
