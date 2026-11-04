@@ -1302,12 +1302,37 @@ impl RnAppWindow {
         };
 
         // Order matters here, we want to go from specific -> generic, mostly because `text/plain` is contained in other text based formats
-        if content_formats.contain_mime_type("text/uri-list") {
+        if content_formats.contain_mime_type("text/uri-list")
+            || content_formats.contain_type(gdk::FileList::static_type())
+        {
             glib::spawn_future_local(clone!(
                 #[weak(rename_to=appwindow)]
                 self,
                 async move {
                     debug!("Recognized clipboard content format: files list");
+
+                    if content_formats.contain_type(gdk::FileList::static_type()) {
+                        match appwindow
+                            .clipboard()
+                            .read_value_future(
+                                gdk::FileList::static_type(),
+                                glib::source::Priority::DEFAULT,
+                            )
+                            .await
+                        {
+                            Ok(value) => {
+                                if let Ok(file_list) = value.get::<gdk::FileList>() {
+                                    for file in file_list.files() {
+                                        appwindow.open_file_w_dialogs(file, target_pos, true).await;
+                                    }
+                                    return;
+                                }
+                            }
+                            Err(e) => {
+                                debug!("Reading clipboard as FileList failed: {e:?}");
+                            }
+                        }
+                    }
 
                     match appwindow
                         .clipboard()
@@ -1488,51 +1513,51 @@ impl RnAppWindow {
             || content_formats.contain_mime_type("image/jpg")
             || content_formats.contain_mime_type("image/tiff")
             || content_formats.contain_mime_type("image/bmp")
+            || content_formats.contain_type(gdk::Texture::static_type())
         {
-            const MIMES: [&str; 5] = [
+            let mime_type = [
                 "image/png",
                 "image/jpeg",
                 "image/jpg",
                 "image/tiff",
                 "image/bmp",
-            ];
-            if let Some(mime_type) = MIMES
-                .into_iter()
-                .find(|&mime| content_formats.contain_mime_type(mime))
-            {
-                glib::spawn_future_local(clone!(
-                    #[weak]
-                    canvas,
-                    #[weak(rename_to=appwindow)]
-                    self,
-                    async move {
-                        debug!("Recognized clipboard content: bitmap image");
+            ]
+            .into_iter()
+            .find(|&mime| content_formats.contain_mime_type(mime))
+            .unwrap_or("image/png");
 
-                        match appwindow.clipboard().read_texture_future().await {
-                            Ok(Some(texture)) => {
-                                if let Err(e) = canvas
-                                    .load_in_bitmapimage_bytes(
-                                        texture.save_to_png_bytes().to_vec(),
-                                        target_pos,
-                                        appwindow.respect_borders(),
-                                    )
-                                    .await
-                                {
-                                    error!(
-                                        "Loading bitmap image bytes failed while pasting clipboard as {mime_type}, Err: {e:?}"
-                                    );
-                                };
-                            }
-                            Ok(None) => {}
-                            Err(e) => {
+            glib::spawn_future_local(clone!(
+                #[weak]
+                canvas,
+                #[weak(rename_to=appwindow)]
+                self,
+                async move {
+                    debug!("Recognized clipboard content: bitmap image");
+
+                    match appwindow.clipboard().read_texture_future().await {
+                        Ok(Some(texture)) => {
+                            if let Err(e) = canvas
+                                .load_in_bitmapimage_bytes(
+                                    texture.save_to_png_bytes().to_vec(),
+                                    target_pos,
+                                    appwindow.respect_borders(),
+                                )
+                                .await
+                            {
                                 error!(
-                                    "Reading clipboard text failed while pasting clipboard as {mime_type}, Err: {e:?}"
+                                    "Loading bitmap image bytes failed while pasting clipboard as {mime_type}, Err: {e:?}"
                                 );
-                            }
-                        };
-                    }
-                ));
-            }
+                            };
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            error!(
+                                "Reading clipboard text failed while pasting clipboard as {mime_type}, Err: {e:?}"
+                            );
+                        }
+                    };
+                }
+            ));
         } else if content_formats.contain_mime_type("text/plain")
             || content_formats.contain_mime_type("text/plain;charset=utf-8")
         {

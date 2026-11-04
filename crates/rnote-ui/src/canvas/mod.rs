@@ -115,8 +115,13 @@ mod imp {
                 .actions(gdk::DragAction::COPY)
                 .build();
 
-            // the order here is important: first files, then text
-            drop_target.set_types(&[gio::File::static_type(), glib::types::Type::STRING]);
+            // the order here is important: first files, then textures, then text
+            drop_target.set_types(&[
+                gio::File::static_type(),
+                gdk::FileList::static_type(),
+                gdk::Texture::static_type(),
+                glib::types::Type::STRING,
+            ]);
 
             let regular_cursor_icon_name = String::from("cursor-dot-medium");
             let regular_cursor = gdk::Cursor::from_texture(
@@ -1413,18 +1418,111 @@ impl RnCanvas {
                                 .dispatch_toast_error(&gettext("Inserting file failed"));
                         }
                     };
-                } else if value.is::<String>() {
-                    match canvas.load_in_text(value.get::<String>().unwrap(), Some(pos)) {
-                        Ok(_) => {
+                } else if value.is::<gdk::FileList>() {
+                    match value.get::<gdk::FileList>() {
+                        Ok(file_list) => {
+                            let files = file_list.files();
+                            glib::spawn_future_local(clone!(
+                                #[weak]
+                                appwindow,
+                                async move {
+                                    for file in files {
+                                        appwindow.open_file_w_dialogs(file, Some(pos), true).await;
+                                    }
+                                }
+                            ));
                             accept_drop = true;
                         }
                         Err(e) => {
-                            error!("Failed to insert dropped in text, Err: {e:?}");
+                            error!("Failed to get dropped in file list, Err: {e:?}");
                             appwindow
                                 .overlays()
-                                .dispatch_toast_error(&gettext("Inserting text failed"));
+                                .dispatch_toast_error(&gettext("Inserting file failed"));
                         }
                     };
+                } else if value.is::<gdk::Texture>() {
+                    match value.get::<gdk::Texture>() {
+                        Ok(texture) => {
+                            let bytes = texture.save_to_png_bytes().to_vec();
+                            glib::spawn_future_local(clone!(
+                                #[weak]
+                                appwindow,
+                                #[weak(rename_to=canvas)]
+                                self,
+                                async move {
+                                    if let Err(e) = canvas
+                                        .load_in_bitmapimage_bytes(
+                                            bytes,
+                                            Some(pos),
+                                            appwindow.respect_borders(),
+                                        )
+                                        .await
+                                    {
+                                        error!("Failed to insert dropped in texture, Err: {e:?}");
+                                        appwindow
+                                            .overlays()
+                                            .dispatch_toast_error(&gettext("Inserting file failed"));
+                                    }
+                                }
+                            ));
+                            accept_drop = true;
+                        }
+                        Err(e) => {
+                            error!("Failed to get dropped in texture, Err: {e:?}");
+                        }
+                    };
+                } else if value.is::<String>() {
+                    let text = value.get::<String>().unwrap();
+                    if text.starts_with("file://") {
+                        let file_paths = text
+                            .lines()
+                            .filter_map(|line| {
+                                if let Ok(url) = url::Url::parse(line) {
+                                    url.to_file_path().ok()
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        if !file_paths.is_empty() {
+                            glib::spawn_future_local(clone!(
+                                #[weak]
+                                appwindow,
+                                async move {
+                                    for file_path in file_paths {
+                                        appwindow
+                                            .open_file_w_dialogs(
+                                                gio::File::for_path(&file_path),
+                                                Some(pos),
+                                                true,
+                                            )
+                                            .await;
+                                    }
+                                }
+                            ));
+                            accept_drop = true;
+                        } else {
+                            match canvas.load_in_text(text, Some(pos)) {
+                                Ok(_) => accept_drop = true,
+                                Err(e) => {
+                                    error!("Failed to insert dropped in text, Err: {e:?}");
+                                    appwindow
+                                        .overlays()
+                                        .dispatch_toast_error(&gettext("Inserting text failed"));
+                                }
+                            };
+                        }
+                    } else {
+                        match canvas.load_in_text(text, Some(pos)) {
+                            Ok(_) => accept_drop = true,
+                            Err(e) => {
+                                error!("Failed to insert dropped in text, Err: {e:?}");
+                                appwindow
+                                    .overlays()
+                                    .dispatch_toast_error(&gettext("Inserting text failed"));
+                            }
+                        };
+                    }
                 }
 
                 accept_drop

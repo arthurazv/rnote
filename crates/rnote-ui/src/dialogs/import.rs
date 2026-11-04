@@ -58,44 +58,94 @@ pub(crate) async fn filedialog_open_doc(appwindow: &RnAppWindow) {
 }
 
 pub(crate) async fn filedialog_import_file(appwindow: &RnAppWindow) {
-    let filter = FileFilter::new();
-    // note : mimetypes are not supported with the native file picker on windows
-    // See the limitations on FileChooserNative
-    // https://gtk-rs.org/gtk3-rs/stable/latest/docs/gtk/struct.FileChooserNative.html#win32-details--gtkfilechooserdialognative-win32
-    if cfg!(any(target_os = "windows", target_os = "macos")) {
-        filter.add_pattern("*.xopp");
-        filter.add_pattern("*.pdf");
-        filter.add_pattern("*.svg");
-        filter.add_pattern("*.png");
-        filter.add_pattern("*.jpg");
-        filter.add_pattern("*.jpeg");
-        filter.add_pattern("*.txt");
-    } else {
-        filter.add_mime_type("application/x-xopp");
-        filter.add_mime_type("application/pdf");
-        filter.add_mime_type("image/svg+xml");
-        filter.add_mime_type("image/png");
-        filter.add_mime_type("image/jpeg");
-        filter.add_mime_type("text/plain");
-    }
-    filter.add_suffix("xopp");
-    filter.add_suffix("pdf");
-    filter.add_suffix("svg");
-    filter.add_suffix("png");
-    filter.add_suffix("jpg");
-    filter.add_suffix("jpeg");
-    filter.add_suffix("txt");
-    filter.set_name(Some(&gettext("Jpg, Pdf, Png, Svg, Xopp, Txt")));
-
     let filter_list = gio::ListStore::new::<FileFilter>();
-    filter_list.append(&filter);
+
+    let all_filter = FileFilter::new();
+    all_filter.set_name(Some(&gettext("All Supported Files")));
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
+        all_filter.add_pattern("*.xopp");
+        all_filter.add_pattern("*.pdf");
+        all_filter.add_pattern("*.svg");
+        all_filter.add_pattern("*.png");
+        all_filter.add_pattern("*.jpg");
+        all_filter.add_pattern("*.jpeg");
+        all_filter.add_pattern("*.webp");
+        all_filter.add_pattern("*.bmp");
+        all_filter.add_pattern("*.tiff");
+        all_filter.add_pattern("*.txt");
+        all_filter.add_pattern("*.rnote");
+    } else {
+        all_filter.add_mime_type("application/x-xopp");
+        all_filter.add_mime_type("application/pdf");
+        all_filter.add_mime_type("image/svg+xml");
+        all_filter.add_mime_type("image/png");
+        all_filter.add_mime_type("image/jpeg");
+        all_filter.add_mime_type("image/*");
+        all_filter.add_mime_type("text/plain");
+        all_filter.add_mime_type("application/rnote");
+    }
+    if cfg!(target_os = "macos") {
+        all_filter.add_suffix("xopp");
+        all_filter.add_suffix("pdf");
+        all_filter.add_suffix("svg");
+        all_filter.add_suffix("png");
+        all_filter.add_suffix("jpg");
+        all_filter.add_suffix("jpeg");
+        all_filter.add_suffix("webp");
+        all_filter.add_suffix("bmp");
+        all_filter.add_suffix("tiff");
+        all_filter.add_suffix("txt");
+        all_filter.add_suffix("rnote");
+    }
+    filter_list.append(&all_filter);
+
+    let pdf_filter = FileFilter::new();
+    pdf_filter.set_name(Some(&gettext("PDF Documents (*.pdf)")));
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
+        pdf_filter.add_pattern("*.pdf");
+    } else {
+        pdf_filter.add_mime_type("application/pdf");
+    }
+    if cfg!(target_os = "macos") {
+        pdf_filter.add_suffix("pdf");
+    }
+    filter_list.append(&pdf_filter);
+
+    let img_filter = FileFilter::new();
+    img_filter.set_name(Some(&gettext("Images (*.png, *.jpg, *.jpeg, *.svg, ...)")));
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
+        img_filter.add_pattern("*.png");
+        img_filter.add_pattern("*.jpg");
+        img_filter.add_pattern("*.jpeg");
+        img_filter.add_pattern("*.svg");
+        img_filter.add_pattern("*.webp");
+        img_filter.add_pattern("*.bmp");
+        img_filter.add_pattern("*.tiff");
+    } else {
+        img_filter.add_mime_type("image/*");
+    }
+    if cfg!(target_os = "macos") {
+        img_filter.add_suffix("png");
+        img_filter.add_suffix("jpg");
+        img_filter.add_suffix("jpeg");
+        img_filter.add_suffix("svg");
+        img_filter.add_suffix("webp");
+        img_filter.add_suffix("bmp");
+        img_filter.add_suffix("tiff");
+    }
+    filter_list.append(&img_filter);
+
+    let any_filter = FileFilter::new();
+    any_filter.set_name(Some(&gettext("All Files (*)")));
+    any_filter.add_pattern("*");
+    filter_list.append(&any_filter);
 
     let dialog = FileDialog::builder()
         .title(gettext("Import File"))
         .modal(true)
         .accept_label(gettext("Import"))
         .filters(&filter_list)
-        .default_filter(&filter)
+        .default_filter(&all_filter)
         .build();
 
     if let Some(current_workspace_dir) = appwindow.sidebar().workspacebrowser().dir_list_dir() {
