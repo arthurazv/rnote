@@ -5,8 +5,12 @@
 }
 
 /* Ensure proper titlebar padding for macOS window traffic lights (close/min/max) */
+window:not(.fullscreen) headerbar {
+    padding-left: 78px;
+}
+
 window:not(.fullscreen) headerbar > windowhandle > box > box.start {
-    margin-left: 64px;
+    margin-left: 10px;
 }
 
 /* Rounded, native-feeling popovers and dialogs */

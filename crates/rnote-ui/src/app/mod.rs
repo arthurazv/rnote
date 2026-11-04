@@ -55,6 +55,8 @@ mod imp {
             self.setup_buildables();
             obj.setup_actions();
             obj.setup_action_accels();
+            #[cfg(target_os = "macos")]
+            obj.setup_macos_menubar();
         }
 
         fn activate(&self) {
