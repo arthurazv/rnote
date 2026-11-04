@@ -363,7 +363,10 @@ mod imp {
                     move |controller, _, dy| {
                         let modifiers = controller.current_event_state();
 
-                        if !modifiers.contains(gdk::ModifierType::CONTROL_MASK) {
+                        if !modifiers.contains(gdk::ModifierType::CONTROL_MASK)
+                            && !modifiers.contains(gdk::ModifierType::SUPER_MASK)
+                            && !modifiers.contains(gdk::ModifierType::META_MASK)
+                        {
                             return glib::Propagation::Proceed;
                         }
 
@@ -623,6 +626,7 @@ mod imp {
                         canvaswrapper
                             .canvas()
                             .emit_handle_widget_flags(widget_flags);
+                        canvaswrapper.canvas().queue_resize();
                     }
                 ));
 
@@ -640,6 +644,7 @@ mod imp {
                         canvaswrapper
                             .canvas()
                             .emit_handle_widget_flags(widget_flags);
+                        canvaswrapper.canvas().queue_resize();
                     }
                 ));
             }

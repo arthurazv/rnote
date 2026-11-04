@@ -346,7 +346,7 @@ impl RnAppWindow {
             canvas.set_unsaved_changes(true);
             canvas.set_empty(false);
         }
-        if widget_flags.view_modified {
+        if widget_flags.view_modified && !widget_flags.zoomed_temporarily {
             canvas.queue_allocate();
         }
         if widget_flags.zoomed_temporarily {
@@ -355,7 +355,7 @@ impl RnAppWindow {
             self.main_header()
                 .canvasmenu()
                 .refresh_zoom_reset_label(total_zoom);
-            canvas.queue_resize();
+            canvas.queue_draw();
         }
         if widget_flags.zoomed {
             let total_zoom = canvas.engine_ref().camera.total_zoom();

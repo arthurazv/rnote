@@ -923,8 +923,6 @@ impl RnCanvas {
                 widget_size[1],
             );
         }
-
-        self.queue_resize();
     }
 
     pub(crate) fn workaround_disable_kinetic_scrolling(&self, scroller: Option<&ScrolledWindow>) {
