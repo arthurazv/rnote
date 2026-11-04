@@ -30,17 +30,21 @@ Este documento consolida o diagnóstico técnico completo, os arquivos alterados
 
 ---
 
-## 3. Arquivos Chave a Modificar
+## 3. Modificações Implementadas
 
 1. `crates/rnote-ui/src/app/appactions.rs`:
-   - Adicionar `<Meta>` nos aceleradores de `app.quit` e `app.new-window`.
-   - Adicionar o método `setup_macos_menubar(&self)`.
+   - Adicionado `<Meta>` nos aceleradores de `app.quit` e `app.new-window`.
+   - Adicionado o método `setup_macos_menubar(&self)` configurando os menus File, Edit (Undo, Redo, Cut, Copy, Paste, Select All, Clear Document), View e Window (`gtk-macos-special="window-submenu"`).
 
 2. `crates/rnote-ui/src/app/mod.rs`:
-   - Invocar `setup_macos_menubar()` no `startup(&self)`.
+   - Invocado `obj.setup_macos_menubar()` no `startup(&self)`.
 
 3. `crates/rnote-ui/src/appwindow/actions.rs`:
-   - Atualizar a lista de aceleradores em `setup_action_accels` adicionando `<Meta>` em todas as ações (`win.undo`, `win.redo`, `win.clipboard-*`, `win.save-doc`, etc.).
+   - Atualizada a lista de aceleradores em `setup_action_accels` adicionando `<Meta>` em todas as ações (`win.undo`, `win.redo`, `win.clipboard-*`, `win.save-doc`, etc.).
 
 4. `crates/rnote-ui/data/style-mac.css`:
-   - Corrigir o padding do headerbar.
+   - Corrigido o padding do headerbar (`padding-left: 78px;`).
+
+5. **Deploy:**
+   - Compilado via GitHub Actions (Run ID `41752017042`).
+   - Binário e recursos instalados em `/Applications/Rnote.app`.
