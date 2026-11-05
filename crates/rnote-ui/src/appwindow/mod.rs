@@ -622,6 +622,12 @@ impl RnAppWindow {
 
         self.main_header().main_title().set_title(&title);
         self.main_header().main_title().set_subtitle(&subtitle);
+
+        #[cfg(target_os = "macos")]
+        {
+            let path = canvas.output_file().and_then(|f| f.path());
+            update_macos_document_state(self, canvas.unsaved_changes(), path.as_deref());
+        }
     }
 
     /// Open the file, with import dialogs when appropriate.
@@ -1070,5 +1076,74 @@ impl RnAppWindow {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn update_macos_document_state(
+    window: &RnAppWindow,
+    edited: bool,
+    file_path: Option<&std::path::Path>,
+) {
+    let Some(surface) = window.surface() else {
+        return;
+    };
+    unsafe {
+        unsafe extern "C" {
+            fn gdk_macos_surface_get_native_window(
+                surface: *mut std::ffi::c_void,
+            ) -> *mut std::ffi::c_void;
+            fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+            fn objc_msgSend(
+                receiver: *mut std::ffi::c_void,
+                op: *mut std::ffi::c_void,
+                ...
+            ) -> *mut std::ffi::c_void;
+            fn objc_getClass(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+        }
+
+        let nswindow = gdk_macos_surface_get_native_window(surface.as_ptr() as *mut _);
+        if nswindow.is_null() {
+            return;
+        }
+
+        let sel_set_edited = sel_registerName(b"setDocumentEdited:\0".as_ptr() as *const _);
+        let msg_set_edited: unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void, bool) =
+            std::mem::transmute(objc_msgSend as *const ());
+        msg_set_edited(nswindow, sel_set_edited, edited);
+
+        let sel_set_filename =
+            sel_registerName(b"setRepresentedFilename:\0".as_ptr() as *const _);
+        let msg_set_filename: unsafe extern "C" fn(
+            *mut std::ffi::c_void,
+            *mut std::ffi::c_void,
+            *mut std::ffi::c_void,
+        ) = std::mem::transmute(objc_msgSend as *const ());
+
+        let nsstring_cls = objc_getClass(b"NSString\0".as_ptr() as *const _);
+        if let Some(path) = file_path
+            && let Some(path_str) = path.to_str()
+        {
+            let sel_string_with_utf8 =
+                sel_registerName(b"stringWithUTF8String:\0".as_ptr() as *const _);
+            let msg_nsstring: unsafe extern "C" fn(
+                *mut std::ffi::c_void,
+                *mut std::ffi::c_void,
+                *const std::ffi::c_char,
+            ) -> *mut std::ffi::c_void = std::mem::transmute(objc_msgSend as *const ());
+            let c_str = std::ffi::CString::new(path_str).unwrap_or_default();
+            let ns_path = msg_nsstring(nsstring_cls, sel_string_with_utf8, c_str.as_ptr());
+            if !ns_path.is_null() {
+                msg_set_filename(nswindow, sel_set_filename, ns_path);
+            }
+        } else {
+            let sel_string = sel_registerName(b"string\0".as_ptr() as *const _);
+            let msg_string: unsafe extern "C" fn(
+                *mut std::ffi::c_void,
+                *mut std::ffi::c_void,
+            ) -> *mut std::ffi::c_void = std::mem::transmute(objc_msgSend as *const ());
+            let empty_ns_str = msg_string(nsstring_cls, sel_string);
+            msg_set_filename(nswindow, sel_set_filename, empty_ns_str);
+        }
     }
 }

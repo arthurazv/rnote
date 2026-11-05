@@ -374,6 +374,7 @@ gets disabled.</property>
                               <item translatable="yes">Dots</item>
                               <item translatable="yes">Isometric Grid</item>
                               <item translatable="yes">Isometric Dots</item>
+                              <item translatable="yes">Cornell Notes</item>
                             </items>
                           </object>
                         </property>

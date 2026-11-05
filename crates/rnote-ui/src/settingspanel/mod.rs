@@ -1056,6 +1056,16 @@ impl RnSettingsPanel {
                                 .doc_background_pattern_height_unitentry
                                 .set_sensitive(true);
                         }
+                        PatternStyle::Cornell => {
+                            settings_panel
+                                .imp()
+                                .doc_background_pattern_width_unitentry
+                                .set_sensitive(false);
+                            settings_panel
+                                .imp()
+                                .doc_background_pattern_height_unitentry
+                                .set_sensitive(true);
+                        }
                     }
 
                     if canvas.engine_ref().document.config.background.pattern != pattern {

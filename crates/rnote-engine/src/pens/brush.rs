@@ -8,6 +8,7 @@ use crate::strokes::BrushStroke;
 use crate::strokes::Stroke;
 use crate::{DrawableOnDoc, WidgetFlags};
 use p2d::bounding_volume::{Aabb, BoundingVolume};
+use p2d::math::Vector2;
 use piet::RenderContext;
 use rnote_compose::Constraints;
 use rnote_compose::Style;
@@ -16,7 +17,7 @@ use rnote_compose::builders::{
     PenPathBuilderType, PenPathCurvedBuilder, PenPathModeledBuilder, PenPathSimpleBuilder,
 };
 use rnote_compose::eventresult::{EventPropagation, EventResult};
-use rnote_compose::penevent::{PenEvent, PenProgress};
+use rnote_compose::penevent::{ModifierKey, PenEvent, PenProgress};
 use rnote_compose::penpath::{Element, Segment};
 use std::time::Instant;
 
@@ -27,6 +28,7 @@ enum BrushState {
         path_builder: Box<dyn Buildable<Emit = Segment>>,
         current_stroke_key: StrokeKey,
         preview_style: Style,
+        start_pos: Vector2,
     },
 }
 
@@ -120,6 +122,7 @@ impl PenBehaviour for Brush {
                         ),
                         current_stroke_key,
                         preview_style,
+                        start_pos: element.pos,
                     };
 
                     EventResult {
@@ -185,10 +188,33 @@ impl PenBehaviour for Brush {
                 BrushState::Drawing {
                     path_builder,
                     current_stroke_key,
+                    start_pos,
                     ..
                 },
-                pen_event,
+                mut pen_event,
             ) => {
+                // If Shift key is pressed, constrain movement to horizontal or vertical axis from start_pos
+                match &mut pen_event {
+                    PenEvent::Down {
+                        element,
+                        modifier_keys,
+                    }
+                    | PenEvent::Up {
+                        element,
+                        modifier_keys,
+                    } => {
+                        if modifier_keys.contains(&ModifierKey::KeyboardShift) {
+                            let delta = element.pos - *start_pos;
+                            if delta.x.abs() >= delta.y.abs() {
+                                element.pos.y = start_pos.y;
+                            } else {
+                                element.pos.x = start_pos.x;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
                 let builder_result =
                     path_builder.handle_event(pen_event, now, Constraints::default());
                 let handled = builder_result.handled;
