@@ -270,3 +270,14 @@ toast {
 .pagesnavigator-thumbnail {
     border-radius: 5px;
 }
+
+/* Highlighter visual indicator on tool button */
+button.highlighter-active {
+    background-color: alpha(#f5c211, 0.25);
+    color: #e5a50a;
+}
+
+button.highlighter-active:checked {
+    background-color: alpha(#f5c211, 0.4);
+    color: #b87800;
+}

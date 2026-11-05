@@ -276,11 +276,15 @@ impl RnAppWindow {
                 if !active_pen_is_brush {
                     brush_page.set_brush_style(rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Marker);
                     appwindow.set_pen_style_with_lock(PenStyle::Brush);
+                    appwindow.overlays().dispatch_toast_text(&gettext("Highlighter active"), Some(std::time::Duration::from_secs(1)));
                 } else if current_brush_style == rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Marker {
                     brush_page.set_brush_style(rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Solid);
+                    appwindow.overlays().dispatch_toast_text(&gettext("Pen active"), Some(std::time::Duration::from_secs(1)));
                 } else {
                     brush_page.set_brush_style(rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Marker);
+                    appwindow.overlays().dispatch_toast_text(&gettext("Highlighter active"), Some(std::time::Duration::from_secs(1)));
                 }
+                appwindow.refresh_ui();
             }
         ));
 
