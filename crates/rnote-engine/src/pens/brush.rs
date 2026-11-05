@@ -19,7 +19,9 @@ use rnote_compose::builders::{
 use rnote_compose::eventresult::{EventPropagation, EventResult};
 use rnote_compose::penevent::{ModifierKey, PenEvent, PenProgress};
 use rnote_compose::penpath::{Element, Segment};
-use std::time::Instant;
+use rnote_compose::shapes::Shape;
+use crate::strokes::ShapeStroke;
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 enum BrushState {
@@ -29,6 +31,10 @@ enum BrushState {
         current_stroke_key: StrokeKey,
         preview_style: Style,
         start_pos: Vector2,
+        raw_points: Vec<Vector2>,
+        last_move_pos: Vector2,
+        last_move_time: Instant,
+        snapped_shape: Option<Shape>,
     },
 }
 
@@ -123,6 +129,10 @@ impl PenBehaviour for Brush {
                         current_stroke_key,
                         preview_style,
                         start_pos: element.pos,
+                        raw_points: vec![element.pos],
+                        last_move_pos: element.pos,
+                        last_move_time: now,
+                        snapped_shape: None,
                     };
 
                     EventResult {
@@ -145,14 +155,26 @@ impl PenBehaviour for Brush {
             },
             (
                 BrushState::Drawing {
-                    current_stroke_key, ..
+                    current_stroke_key,
+                    snapped_shape,
+                    ..
                 },
                 PenEvent::Cancel,
             ) => {
-                if let Some(Stroke::BrushStroke(brushstroke)) =
+                if snapped_shape.is_none() {
+                    if let Some(Stroke::BrushStroke(brushstroke)) =
+                        engine_view.store.get_stroke_mut(*current_stroke_key)
+                    {
+                        brushstroke.style = engine_view
+                            .config
+                            .pens_config
+                            .brush_config
+                            .style_for_current_options();
+                    }
+                } else if let Some(Stroke::ShapeStroke(shapestroke)) =
                     engine_view.store.get_stroke_mut(*current_stroke_key)
                 {
-                    brushstroke.style = engine_view
+                    shapestroke.style = engine_view
                         .config
                         .pens_config
                         .brush_config
@@ -188,8 +210,12 @@ impl PenBehaviour for Brush {
                 BrushState::Drawing {
                     path_builder,
                     current_stroke_key,
+                    preview_style,
                     start_pos,
-                    ..
+                    raw_points,
+                    last_move_pos,
+                    last_move_time,
+                    snapped_shape,
                 },
                 mut pen_event,
             ) => {
@@ -213,6 +239,39 @@ impl PenBehaviour for Brush {
                         }
                     }
                     _ => {}
+                }
+
+                // Track motion points for hold-to-shape recognition
+                if let PenEvent::Down { element, .. } = &pen_event {
+                    raw_points.push(element.pos);
+                    let dist = (element.pos - *last_move_pos).length();
+                    if dist > 8.0 {
+                        *last_move_pos = element.pos;
+                        *last_move_time = now;
+                    }
+                }
+
+                // If held still for >= 420ms while pen is down, snap live into shape
+                if snapped_shape.is_none()
+                    && raw_points.len() >= 6
+                    && now.duration_since(*last_move_time) >= Duration::from_millis(420)
+                {
+                    if let Some(shape) = crate::pens::shaperecognizer::recognize_shape(raw_points) {
+                        *snapped_shape = Some(shape.clone());
+
+                        if let Some(stroke) = engine_view.store.get_stroke_mut(*current_stroke_key) {
+                            *stroke = Stroke::ShapeStroke(ShapeStroke::new(shape, preview_style.clone()));
+                            widget_flags.store_modified = true;
+                        }
+
+                        engine_view.store.update_geometry_for_stroke(*current_stroke_key);
+                        engine_view.store.regenerate_rendering_for_stroke_threaded(
+                            engine_view.tasks_tx.clone(),
+                            *current_stroke_key,
+                            engine_view.camera.viewport(),
+                            engine_view.camera.image_scale(),
+                        );
+                    }
                 }
 
                 let builder_result =
@@ -245,7 +304,8 @@ impl PenBehaviour for Brush {
 
                         let n_segments = segments.len();
 
-                        if n_segments != 0 {
+                        // Only continue extending the brush path if we have not snapped to a shape
+                        if snapped_shape.is_none() && n_segments != 0 {
                             if let Some(Stroke::BrushStroke(brushstroke)) =
                                 engine_view.store.get_stroke_mut(*current_stroke_key)
                             {
@@ -265,36 +325,62 @@ impl PenBehaviour for Brush {
                         PenProgress::InProgress
                     }
                     BuilderProgress::Finished(segments) => {
-                        let n_segments = segments.len();
+                        let final_style = engine_view
+                            .config
+                            .pens_config
+                            .brush_config
+                            .style_for_current_options();
 
-                        if n_segments != 0 {
+                        // If not already snapped during Down hold, check if held at release (>= 380ms)
+                        if snapped_shape.is_none()
+                            && raw_points.len() >= 6
+                            && now.duration_since(*last_move_time) >= Duration::from_millis(380)
+                        {
+                            if let Some(shape) = crate::pens::shaperecognizer::recognize_shape(raw_points) {
+                                *snapped_shape = Some(shape.clone());
+
+                                if let Some(stroke) = engine_view.store.get_stroke_mut(*current_stroke_key) {
+                                    *stroke = Stroke::ShapeStroke(ShapeStroke::new(shape, final_style.clone()));
+                                    widget_flags.store_modified = true;
+                                }
+                            }
+                        }
+
+                        if snapped_shape.is_some() {
+                            if let Some(Stroke::ShapeStroke(shapestroke)) =
+                                engine_view.store.get_stroke_mut(*current_stroke_key)
+                            {
+                                shapestroke.style = final_style;
+                                widget_flags.store_modified = true;
+                            }
+                        } else {
+                            let n_segments = segments.len();
+
+                            if n_segments != 0 {
+                                if let Some(Stroke::BrushStroke(brushstroke)) =
+                                    engine_view.store.get_stroke_mut(*current_stroke_key)
+                                {
+                                    brushstroke.extend_w_segments(segments);
+                                    widget_flags.store_modified = true;
+                                }
+
+                                engine_view.store.append_rendering_last_segments(
+                                    engine_view.tasks_tx.clone(),
+                                    *current_stroke_key,
+                                    n_segments,
+                                    engine_view.camera.viewport(),
+                                    engine_view.camera.image_scale(),
+                                );
+                            }
+
                             if let Some(Stroke::BrushStroke(brushstroke)) =
                                 engine_view.store.get_stroke_mut(*current_stroke_key)
                             {
-                                brushstroke.extend_w_segments(segments);
-                                widget_flags.store_modified = true;
+                                brushstroke.style = final_style;
                             }
-
-                            engine_view.store.append_rendering_last_segments(
-                                engine_view.tasks_tx.clone(),
-                                *current_stroke_key,
-                                n_segments,
-                                engine_view.camera.viewport(),
-                                engine_view.camera.image_scale(),
-                            );
                         }
 
-                        if let Some(Stroke::BrushStroke(brushstroke)) =
-                            engine_view.store.get_stroke_mut(*current_stroke_key)
-                        {
-                            brushstroke.style = engine_view
-                                .config
-                                .pens_config
-                                .brush_config
-                                .style_for_current_options();
-                        }
-
-                        // Finish up the last stroke
+                        // Finish up the stroke
                         engine_view
                             .store
                             .update_geometry_for_stroke(*current_stroke_key);
@@ -339,8 +425,16 @@ impl DrawableOnDoc for Brush {
 
         match &self.state {
             BrushState::Idle => None,
-            BrushState::Drawing { path_builder, .. } => {
-                path_builder.bounds(&style, engine_view.camera.zoom())
+            BrushState::Drawing {
+                path_builder,
+                snapped_shape,
+                ..
+            } => {
+                if snapped_shape.is_some() {
+                    None
+                } else {
+                    path_builder.bounds(&style, engine_view.camera.zoom())
+                }
             }
         }
     }
@@ -357,18 +451,21 @@ impl DrawableOnDoc for Brush {
             BrushState::Drawing {
                 path_builder,
                 preview_style,
+                snapped_shape,
                 ..
             } => {
-                match engine_view.config.pens_config.brush_config.style {
-                    BrushStyle::Marker => {
-                        // Don't draw the marker, as the pen would render on top of other strokes, while the stroke itself would render underneath them.
-                    }
-                    BrushStyle::Solid | BrushStyle::Textured => {
-                        path_builder.draw_styled(
-                            cx,
-                            preview_style,
-                            engine_view.camera.total_zoom(),
-                        );
+                if snapped_shape.is_none() {
+                    match engine_view.config.pens_config.brush_config.style {
+                        BrushStyle::Marker => {
+                            // Don't draw the marker, as the pen would render on top of other strokes, while the stroke itself would render underneath them.
+                        }
+                        BrushStyle::Solid | BrushStyle::Textured => {
+                            path_builder.draw_styled(
+                                cx,
+                                preview_style,
+                                engine_view.camera.total_zoom(),
+                            );
+                        }
                     }
                 }
             }

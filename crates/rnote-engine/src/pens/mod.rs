@@ -7,6 +7,7 @@ pub mod penmode;
 pub mod pensconfig;
 pub mod selector;
 pub mod shaper;
+pub mod shaperecognizer;
 pub mod shortcuts;
 pub mod tools;
 pub mod typewriter;
