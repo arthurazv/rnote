@@ -1,5 +1,6 @@
 // Imports
 use crate::{RnAppWindow, RnCanvas, RnContextMenu, canvas::reject_pointer_input};
+use gettextrs::gettext;
 use gtk4::{
     CompositeTemplate, CornerType, EventControllerMotion, EventControllerScroll,
     EventControllerScrollFlags, EventSequenceState, GestureClick, GestureDrag, GestureLongPress,
@@ -41,6 +42,7 @@ mod imp {
         pub(crate) canvas_drag_gesture: GestureDrag,
         pub(crate) canvas_zoom_gesture: GestureZoom,
         pub(crate) canvas_multi_press_gesture: GestureClick,
+        pub(crate) canvas_secondary_click_gesture: GestureClick,
         pub(crate) canvas_zoom_scroll_controller: EventControllerScroll,
         pub(crate) canvas_mouse_drag_middle_gesture: GestureDrag,
         pub(crate) canvas_alt_drag_gesture: GestureDrag,
@@ -81,6 +83,13 @@ mod imp {
                 .name("canvas_multi_press_gesture")
                 .button(gdk::BUTTON_PRIMARY)
                 .exclusive(true)
+                .propagation_phase(PropagationPhase::Capture)
+                .build();
+
+            let canvas_secondary_click_gesture = GestureClick::builder()
+                .name("canvas_secondary_click_gesture")
+                .button(gdk::BUTTON_SECONDARY)
+                .exclusive(false)
                 .propagation_phase(PropagationPhase::Capture)
                 .build();
 
@@ -140,6 +149,7 @@ mod imp {
                 canvas_drag_gesture,
                 canvas_zoom_gesture,
                 canvas_multi_press_gesture,
+                canvas_secondary_click_gesture,
                 canvas_zoom_scroll_controller,
                 canvas_mouse_drag_middle_gesture,
                 canvas_alt_drag_gesture,
@@ -183,6 +193,8 @@ mod imp {
                 .add_controller(self.canvas_zoom_gesture.clone());
             self.scroller
                 .add_controller(self.canvas_multi_press_gesture.clone());
+            self.scroller
+                .add_controller(self.canvas_secondary_click_gesture.clone());
             self.scroller
                 .add_controller(self.canvas_zoom_scroll_controller.clone());
             self.scroller
@@ -522,13 +534,16 @@ mod imp {
                     ));
             }
 
-            // Canvas gesture zooming with dragging
+            // Canvas gesture zooming with dragging and two-finger double-tap detection
             {
                 let prev_scale = Rc::new(Cell::new(1_f64));
                 let zoom_begin = Rc::new(Cell::new(1_f64));
                 let new_zoom = Rc::new(Cell::new(1.0));
                 let bbcenter_begin: Rc<Cell<Option<Vector2>>> = Rc::new(Cell::new(None));
                 let offset_begin = Rc::new(Cell::new(Vector2::ZERO));
+                let zoom_start_time = Rc::new(Cell::new(Instant::now()));
+                let pinch_occurred = Rc::new(Cell::new(false));
+                let last_two_finger_tap: Rc<Cell<Option<Instant>>> = Rc::new(Cell::new(None));
 
                 self.canvas_zoom_gesture.connect_begin(clone!(
                     #[strong]
@@ -541,10 +556,16 @@ mod imp {
                     bbcenter_begin,
                     #[strong]
                     offset_begin,
+                    #[strong]
+                    zoom_start_time,
+                    #[strong]
+                    pinch_occurred,
                     #[weak(rename_to=canvaswrapper)]
                     obj,
                     move |gesture, _| {
                         gesture.set_state(EventSequenceState::Claimed);
+                        zoom_start_time.set(Instant::now());
+                        pinch_occurred.set(false);
 
                         // workaround for https://gitlab.gnome.org/GNOME/gtk/-/issues/187
                         canvaswrapper.imp().workaround_disable_kinetic_scrolling();
@@ -575,10 +596,16 @@ mod imp {
                     bbcenter_begin,
                     #[strong]
                     offset_begin,
+                    #[strong]
+                    pinch_occurred,
                     #[weak(rename_to=canvaswrapper)]
                     obj,
                     move |gesture, scale| {
                         let canvas = canvaswrapper.canvas();
+
+                        if (scale - 1.0).abs() > 0.04 {
+                            pinch_occurred.set(true);
+                        }
 
                         if (Camera::ZOOM_MIN..=Camera::ZOOM_MAX)
                             .contains(&(zoom_begin.get() * scale))
@@ -613,9 +640,35 @@ mod imp {
                 ));
 
                 self.canvas_zoom_gesture.connect_end(clone!(
+                    #[strong]
+                    zoom_start_time,
+                    #[strong]
+                    pinch_occurred,
+                    #[strong]
+                    last_two_finger_tap,
                     #[weak(rename_to=canvaswrapper)]
                     obj,
                     move |_gesture, _event_sequence| {
+                        // Detect two-finger tap / double-tap
+                        if !pinch_occurred.get() && zoom_start_time.get().elapsed() < std::time::Duration::from_millis(300) {
+                            if last_two_finger_tap.get().is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(450)) {
+                                last_two_finger_tap.set(None);
+                                let widget_flags = canvaswrapper.canvas().engine_mut().undo(Instant::now());
+                                canvaswrapper.canvas().emit_handle_widget_flags(widget_flags);
+                                if let Some(appwindow) = canvaswrapper
+                                    .root()
+                                    .and_then(|r| r.downcast::<crate::RnAppWindow>().ok())
+                                {
+                                    appwindow.overlays().dispatch_toast_text(
+                                        &gettext("Desfazer (⌘Z)"),
+                                        Some(std::time::Duration::from_millis(900)),
+                                    );
+                                }
+                            } else {
+                                last_two_finger_tap.set(Some(Instant::now()));
+                            }
+                        }
+
                         // workaround for https://gitlab.gnome.org/GNOME/gtk/-/issues/187
                         canvaswrapper.imp().workaround_restore_kinetic_scrolling();
 
@@ -730,6 +783,44 @@ mod imp {
                             // Triple press
                             2 => canvas.engine_mut().text_select_closest_line(),
                             _ => unreachable!(),
+                        }
+                    }
+                ));
+            }
+
+            // Two-finger trackpad double-tap to Undo / triple-tap to Redo
+            {
+                self.canvas_secondary_click_gesture.connect_pressed(clone!(
+                    #[weak(rename_to=canvaswrapper)]
+                    obj,
+                    move |gesture, n_press, _, _| {
+                        let canvas = canvaswrapper.canvas();
+                        if n_press == 2 {
+                            gesture.set_state(EventSequenceState::Claimed);
+                            let widget_flags = canvas.engine_mut().undo(Instant::now());
+                            canvas.emit_handle_widget_flags(widget_flags);
+                            if let Some(appwindow) = canvaswrapper
+                                .root()
+                                .and_then(|r| r.downcast::<crate::RnAppWindow>().ok())
+                            {
+                                appwindow.overlays().dispatch_toast_text(
+                                    &gettext("Desfazer (⌘Z)"),
+                                    Some(std::time::Duration::from_millis(900)),
+                                );
+                            }
+                        } else if n_press == 3 {
+                            gesture.set_state(EventSequenceState::Claimed);
+                            let widget_flags = canvas.engine_mut().redo(Instant::now());
+                            canvas.emit_handle_widget_flags(widget_flags);
+                            if let Some(appwindow) = canvaswrapper
+                                .root()
+                                .and_then(|r| r.downcast::<crate::RnAppWindow>().ok())
+                            {
+                                appwindow.overlays().dispatch_toast_text(
+                                    &gettext("Refazer (⇧⌘Z)"),
+                                    Some(std::time::Duration::from_millis(900)),
+                                );
+                            }
                         }
                     }
                 ));
