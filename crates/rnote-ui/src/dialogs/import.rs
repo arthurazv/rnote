@@ -48,21 +48,29 @@ fn build_all_supported_filter() -> FileFilter {
 }
 
 pub(crate) fn default_initial_folder(appwindow: &RnAppWindow) -> gio::File {
-    if let Some(dir) = appwindow.sidebar().workspacebrowser().dir_list_dir() {
-        return gio::File::for_path(dir);
-    }
     #[cfg(target_os = "macos")]
     {
         let icloud_base = glib::home_dir().join("Library/Mobile Documents/com~apple~CloudDocs");
+        let icloud_rnote = icloud_base.join("Rnote");
+        let _ = std::fs::create_dir_all(&icloud_rnote);
+        if icloud_rnote.exists() {
+            return gio::File::for_path(icloud_rnote);
+        }
         if icloud_base.exists() {
-            let icloud_rnote = icloud_base.join("Rnote");
-            let _ = std::fs::create_dir_all(&icloud_rnote);
-            if icloud_rnote.exists() {
-                return gio::File::for_path(icloud_rnote);
-            }
             return gio::File::for_path(icloud_base);
         }
     }
+
+    if let Some(dir) = appwindow.sidebar().workspacebrowser().dir_list_dir() {
+        if dir != std::path::Path::new("/")
+            && dir != std::path::Path::new(".")
+            && dir != std::path::Path::new("./")
+            && dir.exists()
+        {
+            return gio::File::for_path(dir);
+        }
+    }
+
     if let Some(doc_dir) = glib::user_special_dir(glib::UserDirectory::Documents) {
         let rnote_dir = doc_dir.join("Rnote");
         let _ = std::fs::create_dir_all(&rnote_dir);
