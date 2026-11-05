@@ -65,12 +65,14 @@ impl PensConfig {
     pub fn set_all_stroke_colors(&mut self, stroke_color: Color) {
         let mut marker_color = stroke_color;
         marker_color.a = 0.45;
+        let mut solid_color = stroke_color;
+        solid_color.a = 1.0;
         self.brush_config.marker_options.stroke_color = Some(marker_color);
-        self.brush_config.solid_options.stroke_color = Some(stroke_color);
-        self.brush_config.textured_options.stroke_color = Some(stroke_color);
-        self.shaper_config.smooth_options.stroke_color = Some(stroke_color);
-        self.shaper_config.rough_options.stroke_color = Some(stroke_color);
-        self.typewriter_config.text_style.color = stroke_color;
+        self.brush_config.solid_options.stroke_color = Some(solid_color);
+        self.brush_config.textured_options.stroke_color = Some(solid_color);
+        self.shaper_config.smooth_options.stroke_color = Some(solid_color);
+        self.shaper_config.rough_options.stroke_color = Some(solid_color);
+        self.typewriter_config.text_style.color = solid_color;
     }
 
     pub fn set_all_fill_colors(&mut self, fill_color: Color) {

@@ -19,6 +19,8 @@ mod imp {
         #[template_child]
         pub(crate) brush_toggle: TemplateChild<ToggleButton>,
         #[template_child]
+        pub(crate) highlighter_toggle: TemplateChild<ToggleButton>,
+        #[template_child]
         pub(crate) shaper_toggle: TemplateChild<ToggleButton>,
         #[template_child]
         pub(crate) typewriter_toggle: TemplateChild<ToggleButton>,
@@ -80,6 +82,10 @@ impl RnPenPicker {
 
     pub(crate) fn brush_toggle(&self) -> ToggleButton {
         self.imp().brush_toggle.get()
+    }
+
+    pub(crate) fn highlighter_toggle(&self) -> ToggleButton {
+        self.imp().highlighter_toggle.get()
     }
 
     pub(crate) fn shaper_toggle(&self) -> ToggleButton {
@@ -152,7 +158,23 @@ impl RnPenPicker {
             appwindow,
             move |brush_toggle| {
                 if brush_toggle.is_active() {
+                    let brush_page = appwindow.overlays().penssidebar().brush_page();
+                    brush_page.switch_brush_style(&appwindow, rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Solid);
                     appwindow.set_pen_style_with_lock(PenStyle::Brush);
+                    appwindow.refresh_ui();
+                }
+            }
+        ));
+
+        imp.highlighter_toggle.connect_toggled(clone!(
+            #[weak]
+            appwindow,
+            move |highlighter_toggle| {
+                if highlighter_toggle.is_active() {
+                    let brush_page = appwindow.overlays().penssidebar().brush_page();
+                    brush_page.switch_brush_style(&appwindow, rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Marker);
+                    appwindow.set_pen_style_with_lock(PenStyle::Brush);
+                    appwindow.refresh_ui();
                 }
             }
         ));

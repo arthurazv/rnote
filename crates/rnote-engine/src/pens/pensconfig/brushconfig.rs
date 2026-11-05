@@ -142,13 +142,19 @@ impl BrushConfig {
                 Style::Smooth(options)
             }
             BrushStyle::Solid => {
-                let SolidOptions(options) = self.solid_options.clone();
-
+                let SolidOptions(mut options) = self.solid_options.clone();
+                if let Some(mut color) = options.stroke_color {
+                    color.a = 1.0;
+                    options.stroke_color = Some(color);
+                }
                 Style::Smooth(options)
             }
             BrushStyle::Textured => {
-                let options = self.textured_options.clone();
-
+                let mut options = self.textured_options.clone();
+                if let Some(mut color) = options.stroke_color {
+                    color.a = 1.0;
+                    options.stroke_color = Some(color);
+                }
                 Style::Textured(options)
             }
         }

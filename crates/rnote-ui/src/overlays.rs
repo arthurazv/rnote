@@ -164,7 +164,8 @@ impl RnOverlays {
                     let Some(canvas) = appwindow.active_tab_canvas() else {
                         return;
                     };
-                    let stroke_color = colorpicker.stroke_color().into_compose_color();
+                    let mut stroke_color = colorpicker.stroke_color().into_compose_color();
+                    stroke_color.a = 1.0;
                     let current_pen_style = canvas.engine_ref().current_pen_style_w_override();
 
                     match current_pen_style {

@@ -825,13 +825,9 @@ impl RnAppWindow {
             self.set_snap_positions(snap_positions);
             self.set_visual_debug(visual_debug);
 
-            self.overlays().penpicker().brush_toggle().remove_css_class("highlighter-active");
-
             // Current pen
             match pen_style {
                 PenStyle::Brush => {
-                    let brush_toggle = self.overlays().penpicker().brush_toggle();
-                    brush_toggle.set_active(true);
                     self.overlays()
                         .penssidebar()
                         .sidebar_stack()
@@ -840,10 +836,8 @@ impl RnAppWindow {
                     let style = self.engine_config().read().pens_config.brush_config.style;
                     match style {
                         BrushStyle::Marker => {
-                            brush_toggle.set_icon_name("pen-brush-style-marker-symbolic");
-                            brush_toggle.set_tooltip_text(Some(&gettext("Highlighter active (⇧⌘H to switch)")));
-                            brush_toggle.add_css_class("highlighter-active");
-                            let stroke_color = self
+                            self.overlays().penpicker().highlighter_toggle().set_active(true);
+                            let mut stroke_color = self
                                 .engine_config()
                                 .read()
                                 .pens_config
@@ -851,6 +845,7 @@ impl RnAppWindow {
                                 .marker_options
                                 .stroke_color
                                 .unwrap_or(Color::TRANSPARENT);
+                            stroke_color.a = 1.0;
                             let fill_color = self
                                 .engine_config()
                                 .read()
@@ -867,10 +862,8 @@ impl RnAppWindow {
                                 .set_fill_color(gdk::RGBA::from_compose_color(fill_color));
                         }
                         BrushStyle::Solid => {
-                            brush_toggle.set_icon_name("pen-brush-symbolic");
-                            brush_toggle.set_tooltip_text(Some(&gettext("Pen active (⇧⌘H for Highlighter)")));
-                            brush_toggle.remove_css_class("highlighter-active");
-                            let stroke_color = self
+                            self.overlays().penpicker().brush_toggle().set_active(true);
+                            let mut stroke_color = self
                                 .engine_config()
                                 .read()
                                 .pens_config
@@ -878,6 +871,7 @@ impl RnAppWindow {
                                 .solid_options
                                 .stroke_color
                                 .unwrap_or(Color::TRANSPARENT);
+                            stroke_color.a = 1.0;
                             let fill_color = self
                                 .engine_config()
                                 .read()
@@ -894,10 +888,8 @@ impl RnAppWindow {
                                 .set_fill_color(gdk::RGBA::from_compose_color(fill_color));
                         }
                         BrushStyle::Textured => {
-                            brush_toggle.set_icon_name("pen-brush-symbolic");
-                            brush_toggle.set_tooltip_text(Some(&gettext("Brush (⇧⌘H for Highlighter)")));
-                            brush_toggle.remove_css_class("highlighter-active");
-                            let stroke_color = self
+                            self.overlays().penpicker().brush_toggle().set_active(true);
+                            let mut stroke_color = self
                                 .engine_config()
                                 .read()
                                 .pens_config
@@ -905,6 +897,7 @@ impl RnAppWindow {
                                 .textured_options
                                 .stroke_color
                                 .unwrap_or(Color::TRANSPARENT);
+                            stroke_color.a = 1.0;
                             self.overlays()
                                 .colorpicker()
                                 .set_stroke_color(gdk::RGBA::from_compose_color(stroke_color));

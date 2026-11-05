@@ -10,13 +10,24 @@
     <child>
       <object class="GtkBox" id="toolbox">
         <property name="spacing">6</property>
-        <property name="width-request">350</property>
+        <property name="width-request">400</property>
         <property name="homogeneous">true</property>
         <child>
           <object class="GtkToggleButton" id="brush_toggle">
             <property name="icon_name">pen-brush-symbolic</property>
-            <property name="tooltip_text" translatable="yes">Brush</property>
+            <property name="tooltip_text" translatable="yes">Pen</property>
             <property name="hexpand">true</property>
+            <style>
+              <class name="flat" />
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkToggleButton" id="highlighter_toggle">
+            <property name="icon_name">pen-brush-style-marker-symbolic</property>
+            <property name="tooltip_text" translatable="yes">Highlighter (⇧⌘H)</property>
+            <property name="hexpand">true</property>
+            <property name="group">brush_toggle</property>
             <style>
               <class name="flat" />
             </style>
