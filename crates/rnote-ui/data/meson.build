@@ -159,6 +159,7 @@ endif
 
 rnote_ui_gresources_icons_files = files(
     'icons/scalable/actions/add-page-symbolic.svg',
+    'icons/scalable/actions/doc-pages-symbolic.svg',
     'icons/scalable/actions/appwindow-fullscreen-symbolic.svg',
     'icons/scalable/actions/canvasmenu-symbolic.svg',
     'icons/scalable/actions/clipboard-copy-symbolic.svg',

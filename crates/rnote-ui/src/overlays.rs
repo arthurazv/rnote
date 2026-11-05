@@ -246,6 +246,7 @@ impl RnOverlays {
                 let widget_flags = active_canvaswrapper.canvas().engine_mut().set_active(true);
                 appwindow.handle_widget_flags(widget_flags, &active_canvaswrapper.canvas());
                 appwindow.refresh_ui();
+                appwindow.sidebar().pagesnavigator().schedule_refresh();
             }
         ));
 

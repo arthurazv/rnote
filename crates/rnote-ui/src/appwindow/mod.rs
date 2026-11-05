@@ -385,6 +385,20 @@ impl RnAppWindow {
         if let Some(enable_text_input) = widget_flags.enable_text_input {
             canvas.enable_text_input(enable_text_input);
         }
+
+        // Keep the pages navigator in sync with the active canvas.
+        if self
+            .active_tab_canvas()
+            .is_some_and(|active| active == *canvas)
+        {
+            let pagesnavigator = self.sidebar().pagesnavigator();
+            if widget_flags.store_modified || widget_flags.resize {
+                pagesnavigator.schedule_refresh();
+            }
+            if widget_flags.view_modified || widget_flags.zoomed || widget_flags.resize {
+                pagesnavigator.queue_update_current_page();
+            }
+        }
     }
 
     /// Get the active (selected) tab page.

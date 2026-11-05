@@ -247,3 +247,26 @@ toast {
     margin-left: 72px;
     margin-right: 72px;
 }
+
+/* Page Navigator Sidebar */
+.pagesnavigator-list row {
+    padding: 6px 12px;
+    border-radius: 8px;
+    margin: 2px 8px;
+    transition: background-color 150ms ease-in-out;
+}
+
+.pagesnavigator-list row frame {
+    border-radius: 6px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+    border: 1px solid alpha(currentColor, 0.15);
+    background-color: @card_bg_color;
+}
+
+.pagesnavigator-list row:selected frame {
+    box-shadow: 0 0 0 2px @accent_color, 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.pagesnavigator-thumbnail {
+    border-radius: 5px;
+}

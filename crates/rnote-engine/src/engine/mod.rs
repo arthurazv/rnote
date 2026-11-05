@@ -633,6 +633,131 @@ impl Engine {
         self.camera_set_offset_expand(new_offset)
     }
 
+    /// Maximum number of pages that are considered for page navigation (thumbnails, go-to-page).
+    pub const NAVIGATION_PAGES_MAX: usize = 1000;
+
+    /// Bounds of the pages of the document, used for page navigation (e.g. page thumbnails).
+    ///
+    /// For fixed-size and continuous layouts this returns all pages of the document,
+    /// including empty ones. For (semi-)infinite layouts only pages with content are returned.
+    pub fn doc_navigation_pages_bounds(&self) -> Vec<Aabb> {
+        let pages = match self.document.config.layout {
+            Layout::FixedSize | Layout::ContinuousVertical => {
+                self.document.pages_bounds(SplitOrder::default())
+            }
+            Layout::SemiInfinite | Layout::Infinite => {
+                self.pages_bounds_w_content(SplitOrder::default())
+            }
+        };
+        let mut pages = if pages.is_empty() {
+            self.pages_bounds_w_content(SplitOrder::default())
+        } else {
+            pages
+        };
+        pages.truncate(Self::NAVIGATION_PAGES_MAX);
+        pages
+    }
+
+    /// The index of the page in `pages_bounds` that occupies the largest area of the current viewport.
+    pub fn current_page_index(&self, pages_bounds: &[Aabb]) -> Option<usize> {
+        let viewport = self.camera.viewport();
+        pages_bounds
+            .iter()
+            .enumerate()
+            .filter_map(|(i, page)| {
+                let mins = page.mins.max(viewport.mins);
+                let maxs = page.maxs.min(viewport.maxs);
+                let extents = maxs - mins;
+                if extents[0] > 0.0 && extents[1] > 0.0 {
+                    Some((i, extents[0] * extents[1]))
+                } else {
+                    None
+                }
+            })
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i)
+    }
+
+    /// Move the camera so that the top of the given page is at the top of the viewport.
+    ///
+    /// The page is horizontally centered when it fits into the viewport.
+    pub fn camera_go_to_page(&mut self, page_bounds: Aabb) -> WidgetFlags {
+        let zoom = self.camera.total_zoom();
+        let viewport_size = self.camera.size();
+        let page_width = page_bounds.extents()[0] * zoom;
+        let x = if page_width <= viewport_size[0] {
+            (page_bounds.mins[0] + page_bounds.extents()[0] * 0.5) * zoom - viewport_size[0] * 0.5
+        } else {
+            (page_bounds.mins[0] - Document::SHADOW_WIDTH) * zoom
+        };
+        let y = (page_bounds.mins[1] - Document::SHADOW_WIDTH) * zoom;
+        let mut widget_flags = self.camera_set_offset_expand(Vector2::new(x, y));
+        widget_flags |= self.update_rendering_current_viewport();
+        widget_flags.view_modified = true;
+        widget_flags.redraw = true;
+        widget_flags
+    }
+
+    /// Generate thumbnails for the given pages, rendered in parallel on a background thread pool.
+    ///
+    /// `width_px` is the pixel width of the generated thumbnails.
+    pub fn gen_pages_thumbnails(
+        &self,
+        pages_bounds: Vec<Aabb>,
+        width_px: f64,
+    ) -> oneshot::Receiver<Vec<Option<Image>>> {
+        use rayon::prelude::*;
+
+        let (oneshot_sender, oneshot_receiver) = oneshot::channel::<Vec<Option<Image>>>();
+        let background = self.document.config.background;
+        let pages_content = pages_bounds
+            .into_iter()
+            .map(|bounds| {
+                let keys = self
+                    .store
+                    .stroke_keys_as_rendered_intersecting_bounds(bounds);
+                self.store
+                    .fetch_stroke_content(&keys)
+                    .with_background(background)
+                    .with_bounds(bounds)
+            })
+            .collect::<Vec<StrokeContent>>();
+
+        rayon::spawn(move || {
+            let thumbnails = pages_content
+                .into_par_iter()
+                .map(|content| {
+                    let bounds = content.bounds()?;
+                    let page_width = bounds.extents()[0];
+                    if page_width <= 0.0 {
+                        return None;
+                    }
+                    let image_scale = (width_px / page_width).clamp(0.01, 4.0);
+                    match Image::gen_with_cairo(
+                        |cairo_cx| {
+                            content.draw_to_cairo(cairo_cx, true, true, false, 0.0, image_scale)
+                        },
+                        bounds,
+                        image_scale,
+                    ) {
+                        Ok(image) => Some(image),
+                        Err(e) => {
+                            error!("Generating page thumbnail failed, Err: {e:?}");
+                            None
+                        }
+                    }
+                })
+                .collect::<Vec<Option<Image>>>();
+            if oneshot_sender.send(thumbnails).is_err() {
+                error!(
+                    "Sending page thumbnails to receiver failed. Receiver already dropped."
+                );
+            }
+        });
+
+        oneshot_receiver
+    }
+
     /// Resize the doc when in autoexpanding layouts. called e.g. when finishing a new stroke.
     ///
     /// Background rendering then needs to be updated.

@@ -215,6 +215,75 @@ impl RnAppWindow {
             }
         ));
 
+        // Pages navigator
+        let action_show_pages = gio::SimpleAction::new("show-pages", None);
+        self.add_action(&action_show_pages);
+        action_show_pages.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let stack = appwindow.sidebar().sidebar_stack();
+                let split_view = appwindow.split_view();
+                if split_view.shows_sidebar()
+                    && stack.visible_child_name().as_deref() == Some("pages_page")
+                {
+                    split_view.set_show_sidebar(false);
+                } else {
+                    stack.set_visible_child_name("pages_page");
+                    split_view.set_show_sidebar(true);
+                }
+            }
+        ));
+        let action_go_to_next_page = gio::SimpleAction::new("go-to-next-page", None);
+        self.add_action(&action_go_to_next_page);
+        action_go_to_next_page.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let Some(canvas) = appwindow.active_tab_canvas() else {
+                    return;
+                };
+                crate::pagesnavigator::canvas_go_to_adjacent_page(&appwindow, &canvas, true);
+            }
+        ));
+        let action_go_to_prev_page = gio::SimpleAction::new("go-to-prev-page", None);
+        self.add_action(&action_go_to_prev_page);
+        action_go_to_prev_page.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let Some(canvas) = appwindow.active_tab_canvas() else {
+                    return;
+                };
+                crate::pagesnavigator::canvas_go_to_adjacent_page(&appwindow, &canvas, false);
+            }
+        ));
+
+        // Toggle Highlighter
+        let action_toggle_highlighter = gio::SimpleAction::new("toggle-highlighter", None);
+        self.add_action(&action_toggle_highlighter);
+        action_toggle_highlighter.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let brush_page = appwindow.overlays().penssidebar().brush_page();
+                let current_brush_style = appwindow.engine_config().read().pens_config.brush_config.style;
+                let active_pen_is_brush = appwindow
+                    .active_tab_canvas()
+                    .map(|c| c.engine_ref().current_pen_style_w_override() == PenStyle::Brush)
+                    .unwrap_or(false);
+
+                if !active_pen_is_brush {
+                    brush_page.set_brush_style(rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Marker);
+                    appwindow.set_pen_style_with_lock(PenStyle::Brush);
+                } else if current_brush_style == rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Marker {
+                    brush_page.set_brush_style(rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Solid);
+                } else {
+                    brush_page.set_brush_style(rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Marker);
+                }
+            }
+        ));
+
         // About Dialog
         action_about.connect_activate(clone!(
             #[weak(rename_to=appwindow)]
@@ -1194,6 +1263,9 @@ impl RnAppWindow {
             app.set_accels_for_action("win.new-tab", &["<Meta>t", "<Primary>t", "<Ctrl>t"]);
             app.set_accels_for_action("win.snap-positions", &["<Meta><Shift>p", "<Primary><Shift>p", "<Ctrl><Shift>p"]);
             app.set_accels_for_action("win.return-origin-page", &["<Meta>Home", "<Primary>Home", "<Ctrl>Home"]);
+            app.set_accels_for_action("win.show-pages", &["<Meta><Alt>p"]);
+            app.set_accels_for_action("win.go-to-next-page", &["<Meta><Alt>Down", "<Alt>Page_Down"]);
+            app.set_accels_for_action("win.go-to-prev-page", &["<Meta><Alt>Up", "<Alt>Page_Up"]);
             app.set_accels_for_action("win.clear-doc", &["<Meta>l", "<Primary>l", "<Ctrl>l"]);
             app.set_accels_for_action("win.print-doc", &["<Meta>p", "<Primary>p", "<Ctrl>p"]);
             app.set_accels_for_action("win.add-page-to-doc", &["<Meta><Shift>a", "<Primary><Shift>a", "<Ctrl><Shift>a"]);
@@ -1215,6 +1287,7 @@ impl RnAppWindow {
             app.set_accels_for_action("win.text-italic", &["<Meta>i", "<Primary>i", "<Ctrl>i"]);
             app.set_accels_for_action("win.text-underline", &["<Meta>u", "<Primary>u", "<Ctrl>u"]);
             app.set_accels_for_action("win.pen-style::brush", &["<Meta>1", "<Primary>1", "<Ctrl>1", "<Ctrl>KP_1"]);
+            app.set_accels_for_action("win.toggle-highlighter", &["<Meta><Shift>h", "<Primary><Shift>h", "<Ctrl><Shift>h"]);
             app.set_accels_for_action("win.pen-style::shaper", &["<Meta>2", "<Primary>2", "<Ctrl>2", "<Ctrl>KP_2"]);
             app.set_accels_for_action("win.pen-style::typewriter", &["<Meta>3", "<Primary>3", "<Ctrl>3", "<Ctrl>KP_3"]);
             app.set_accels_for_action("win.pen-style::eraser", &["<Meta>4", "<Primary>4", "<Ctrl>4", "<Ctrl>KP_4"]);
@@ -1251,6 +1324,9 @@ impl RnAppWindow {
             app.set_accels_for_action("win.new-tab", &["<Primary>t", "<Ctrl>t"]);
             app.set_accels_for_action("win.snap-positions", &["<Primary><Shift>p", "<Ctrl><Shift>p"]);
             app.set_accels_for_action("win.return-origin-page", &["<Primary>Home", "<Ctrl>Home"]);
+            app.set_accels_for_action("win.show-pages", &["<Ctrl><Alt>p"]);
+            app.set_accels_for_action("win.go-to-next-page", &["<Ctrl><Alt>Down", "<Alt>Page_Down"]);
+            app.set_accels_for_action("win.go-to-prev-page", &["<Ctrl><Alt>Up", "<Alt>Page_Up"]);
             app.set_accels_for_action("win.clear-doc", &["<Primary>l", "<Ctrl>l"]);
             app.set_accels_for_action("win.print-doc", &["<Primary>p", "<Ctrl>p"]);
             app.set_accels_for_action("win.add-page-to-doc", &["<Primary><Shift>a", "<Ctrl><Shift>a"]);
@@ -1272,6 +1348,7 @@ impl RnAppWindow {
             app.set_accels_for_action("win.text-italic", &["<Primary>i", "<Ctrl>i"]);
             app.set_accels_for_action("win.text-underline", &["<Primary>u", "<Ctrl>u"]);
             app.set_accels_for_action("win.pen-style::brush", &["<Primary>1", "<Ctrl>1", "<Ctrl>KP_1"]);
+            app.set_accels_for_action("win.toggle-highlighter", &["<Primary><Shift>h", "<Ctrl><Shift>h"]);
             app.set_accels_for_action("win.pen-style::shaper", &["<Primary>2", "<Ctrl>2", "<Ctrl>KP_2"]);
             app.set_accels_for_action("win.pen-style::typewriter", &["<Primary>3", "<Ctrl>3", "<Ctrl>KP_3"]);
             app.set_accels_for_action("win.pen-style::eraser", &["<Primary>4", "<Ctrl>4", "<Ctrl>KP_4"]);

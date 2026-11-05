@@ -56,6 +56,17 @@
                 </property>
               </object>
             </child>
+            <!-- pages navigator page -->
+            <child>
+              <object class="AdwViewStackPage">
+                <property name="name">pages_page</property>
+                <property name="title" translatable="yes">Pages</property>
+                <property name="icon-name">doc-pages-symbolic</property>
+                <property name="child">
+                  <object class="RnPagesNavigator" id="pagesnavigator"></object>
+                </property>
+              </object>
+            </child>
             <!-- settings page -->
             <child>
               <object class="AdwViewStackPage">

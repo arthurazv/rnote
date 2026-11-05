@@ -129,9 +129,30 @@ impl RnApp {
         view_menu.append(Some("Zoom In"), Some("win.zoom-in"));
         view_menu.append(Some("Zoom Out"), Some("win.zoom-out"));
         view_menu.append(Some("Reset Zoom"), Some("win.zoom-reset"));
-        view_menu.append(Some("Toggle Overview"), Some("win.toggle-overview"));
-        view_menu.append(Some("Fullscreen"), Some("win.fullscreen"));
+
+        let view_pages = gio::Menu::new();
+        view_pages.append(Some("Pages Navigator"), Some("win.show-pages"));
+        view_pages.append(Some("Next Page"), Some("win.go-to-next-page"));
+        view_pages.append(Some("Previous Page"), Some("win.go-to-prev-page"));
+        view_pages.append(Some("Return to Origin Page"), Some("win.return-origin-page"));
+        view_menu.append_section(None, &view_pages);
+
+        let view_ui = gio::Menu::new();
+        view_ui.append(Some("Toggle Overview"), Some("win.toggle-overview"));
+        view_ui.append(Some("Fullscreen"), Some("win.fullscreen"));
+        view_menu.append_section(None, &view_ui);
         menubar.append_submenu(Some("View"), &view_menu);
+
+        // Tools
+        let tools_menu = gio::Menu::new();
+        tools_menu.append(Some("Brush / Pen"), Some("win.pen-style::brush"));
+        tools_menu.append(Some("Highlighter"), Some("win.toggle-highlighter"));
+        tools_menu.append(Some("Shaper"), Some("win.pen-style::shaper"));
+        tools_menu.append(Some("Typewriter"), Some("win.pen-style::typewriter"));
+        tools_menu.append(Some("Eraser"), Some("win.pen-style::eraser"));
+        tools_menu.append(Some("Selector"), Some("win.pen-style::selector"));
+        tools_menu.append(Some("Tools"), Some("win.pen-style::tools"));
+        menubar.append_submenu(Some("Tools"), &tools_menu);
 
         // Window Menu (macOS native special submenu)
         let window_menu = gio::Menu::new();
