@@ -63,7 +63,9 @@ impl Default for PensConfig {
 
 impl PensConfig {
     pub fn set_all_stroke_colors(&mut self, stroke_color: Color) {
-        self.brush_config.marker_options.stroke_color = Some(stroke_color);
+        let mut marker_color = stroke_color;
+        marker_color.a = 0.45;
+        self.brush_config.marker_options.stroke_color = Some(marker_color);
         self.brush_config.solid_options.stroke_color = Some(stroke_color);
         self.brush_config.textured_options.stroke_color = Some(stroke_color);
         self.shaper_config.smooth_options.stroke_color = Some(stroke_color);

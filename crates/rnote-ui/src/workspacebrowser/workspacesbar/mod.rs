@@ -282,6 +282,29 @@ impl RnWorkspacesBar {
             }
         }
 
+        #[cfg(target_os = "macos")]
+        {
+            let icloud_base = glib::home_dir().join("Library/Mobile Documents/com~apple~CloudDocs");
+            if icloud_base.exists() {
+                let icloud_dir = icloud_base.join("Rnote");
+                let icloud_dir_str = icloud_dir.to_string_lossy().to_string();
+                let has_icloud = workspace_list
+                    .to_vec()
+                    .iter()
+                    .any(|entry| entry.dir() == icloud_dir_str || entry.name() == "iCloud Drive");
+                if !has_icloud {
+                    let _ = std::fs::create_dir_all(&icloud_dir);
+                    let icloud_entry = glib::Object::builder::<RnWorkspaceListEntry>()
+                        .property("dir", icloud_dir_str)
+                        .property("icon", "workspacelistentryicon-folder-symbolic")
+                        .property("color", gdk::RGBA::new(0.0, 0.48, 1.0, 1.0))
+                        .property("name", "iCloud Drive")
+                        .build();
+                    workspace_list.push(icloud_entry);
+                }
+            }
+        }
+
         self.imp().workspace_list.replace_self(workspace_list);
         self.select_workspace_by_index(selected_workspace_index);
     }

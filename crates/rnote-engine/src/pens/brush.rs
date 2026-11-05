@@ -389,7 +389,12 @@ impl Brush {
             .brush_config
             .style_for_current_options();
 
-        if let Some(mut stroke_color) = style.stroke_color() {
+        if engine_view.config.pens_config.brush_config.style == BrushStyle::Marker {
+            if let Some(mut stroke_color) = style.stroke_color() {
+                stroke_color.a = 0.45;
+                style.set_stroke_color(stroke_color);
+            }
+        } else if let Some(mut stroke_color) = style.stroke_color() {
             stroke_color.a = 1.0;
             style.set_stroke_color(stroke_color);
         }
