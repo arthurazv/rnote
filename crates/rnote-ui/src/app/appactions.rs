@@ -1,7 +1,7 @@
 // Imports
 use crate::RnApp;
 use adw::prelude::*;
-use gtk4::{gio, glib, glib::clone, prelude::*};
+use gtk4::{gio, glib, glib::clone};
 
 impl RnApp {
     pub(crate) fn setup_actions(&self) {
@@ -83,13 +83,28 @@ impl RnApp {
 
         // File
         let file_menu = gio::Menu::new();
-        file_menu.append(Some("New Tab"), Some("win.new-tab"));
-        file_menu.append(Some("New Window"), Some("app.new-window"));
-        file_menu.append(Some("Open…"), Some("win.open-doc"));
-        file_menu.append(Some("Save"), Some("win.save-doc"));
-        file_menu.append(Some("Save As…"), Some("win.save-doc-as"));
-        file_menu.append(Some("Close Tab"), Some("win.active-tab-close"));
-        file_menu.append(Some("Print…"), Some("win.print-doc"));
+        let file_new_open = gio::Menu::new();
+        file_new_open.append(Some("New Tab"), Some("win.new-tab"));
+        file_new_open.append(Some("New Window"), Some("app.new-window"));
+        file_new_open.append(Some("Open…"), Some("win.open-doc"));
+        file_menu.append_section(None, &file_new_open);
+
+        let file_import_export = gio::Menu::new();
+        file_import_export.append(Some("Import…"), Some("win.import-file"));
+        let export_submenu = gio::Menu::new();
+        export_submenu.append(Some("Export Document…"), Some("win.export-doc"));
+        export_submenu.append(Some("Export Pages…"), Some("win.export-doc-pages"));
+        export_submenu.append(Some("Export Selection…"), Some("win.export-selection"));
+        file_import_export.append_submenu(Some("Export"), &export_submenu);
+        file_menu.append_section(None, &file_import_export);
+
+        let file_save_close = gio::Menu::new();
+        file_save_close.append(Some("Save"), Some("win.save-doc"));
+        file_save_close.append(Some("Save As…"), Some("win.save-doc-as"));
+        file_save_close.append(Some("Print…"), Some("win.print-doc"));
+        file_save_close.append(Some("Close Tab"), Some("win.active-tab-close"));
+        file_menu.append_section(None, &file_save_close);
+
         menubar.append_submenu(Some("File"), &file_menu);
 
         // Edit

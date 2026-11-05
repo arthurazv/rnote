@@ -82,7 +82,7 @@ impl FileType {
                 "svg" => {
                     return Self::VectorImageFile;
                 }
-                "jpg" | "jpeg" | "png" | "bmp" | "webp" | "tiff" | "tif" => {
+                "jpg" | "jpeg" | "png" | "bmp" | "webp" | "tiff" | "tif" | "gif" => {
                     return Self::BitmapImageFile;
                 }
                 "xopp" => {

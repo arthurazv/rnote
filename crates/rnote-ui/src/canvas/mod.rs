@@ -115,10 +115,10 @@ mod imp {
                 .actions(gdk::DragAction::COPY)
                 .build();
 
-            // the order here is important: first files, then textures, then text
+            // the order here is important: first file lists / files, then textures, then text
             drop_target.set_types(&[
-                gio::File::static_type(),
                 gdk::FileList::static_type(),
+                gio::File::static_type(),
                 gdk::Texture::static_type(),
                 glib::types::Type::STRING,
             ]);
@@ -1398,37 +1398,25 @@ impl RnCanvas {
                     .transform_point2(Vector2::new(x, y));
                 let mut accept_drop = false;
 
-                if value.is::<gio::File>() {
-                    // In some scenarios, get() can fail with `UnexpectedNone` even though is() returned true, e.g. when dealing with trashed files.
-                    match value.get::<gio::File>() {
-                        Ok(file) => {
-                            glib::spawn_future_local(clone!(
-                                #[weak]
-                                appwindow,
-                                async move {
-                                    appwindow.open_file_w_dialogs(file, Some(pos), true).await;
-                                }
-                            ));
-                            accept_drop = true;
-                        }
-                        Err(e) => {
-                            error!("Failed to get dropped in file, Err: {e:?}");
-                            appwindow
-                                .overlays()
-                                .dispatch_toast_error(&gettext("Inserting file failed"));
-                        }
-                    };
-                } else if value.is::<gdk::FileList>() {
+                if value.is::<gdk::FileList>() {
                     match value.get::<gdk::FileList>() {
                         Ok(file_list) => {
                             let files = file_list.files();
-                            glib::spawn_future_local(clone!(
+                            // Schedule on the global default MainContext via idle_add_local_once.
+                            // On macOS, `-[GdkMacosWindow performDragOperation:]` pushes a temporary
+                            // thread-default GMainContext that is destroyed as soon as the drop returns,
+                            // which would cancel any future spawned directly with `spawn_future_local`.
+                            glib::idle_add_local_once(clone!(
                                 #[weak]
                                 appwindow,
-                                async move {
-                                    for file in files {
-                                        appwindow.open_file_w_dialogs(file, Some(pos), true).await;
-                                    }
+                                move || {
+                                    glib::MainContext::default().spawn_local(async move {
+                                        for file in files {
+                                            appwindow
+                                                .open_file_w_dialogs(file, Some(pos), true)
+                                                .await;
+                                        }
+                                    });
                                 }
                             ));
                             accept_drop = true;
@@ -1440,29 +1428,57 @@ impl RnCanvas {
                                 .dispatch_toast_error(&gettext("Inserting file failed"));
                         }
                     };
+                } else if value.is::<gio::File>() {
+                    // In some scenarios, get() can fail with `UnexpectedNone` even though is() returned true, e.g. when dealing with trashed files.
+                    match value.get::<gio::File>() {
+                        Ok(file) => {
+                            glib::idle_add_local_once(clone!(
+                                #[weak]
+                                appwindow,
+                                move || {
+                                    glib::MainContext::default().spawn_local(async move {
+                                        appwindow.open_file_w_dialogs(file, Some(pos), true).await;
+                                    });
+                                }
+                            ));
+                            accept_drop = true;
+                        }
+                        Err(e) => {
+                            error!("Failed to get dropped in file, Err: {e:?}");
+                            appwindow
+                                .overlays()
+                                .dispatch_toast_error(&gettext("Inserting file failed"));
+                        }
+                    };
                 } else if value.is::<gdk::Texture>() {
                     match value.get::<gdk::Texture>() {
                         Ok(texture) => {
                             let bytes = texture.save_to_png_bytes().to_vec();
-                            glib::spawn_future_local(clone!(
+                            glib::idle_add_local_once(clone!(
                                 #[weak]
                                 appwindow,
                                 #[weak]
                                 canvas,
-                                async move {
-                                    if let Err(e) = canvas
-                                        .load_in_bitmapimage_bytes(
-                                            bytes,
-                                            Some(pos),
-                                            appwindow.respect_borders(),
-                                        )
-                                        .await
-                                    {
-                                        error!("Failed to insert dropped in texture, Err: {e:?}");
-                                        appwindow
-                                            .overlays()
-                                            .dispatch_toast_error(&gettext("Inserting file failed"));
-                                    }
+                                move || {
+                                    glib::MainContext::default().spawn_local(async move {
+                                        if let Err(e) = canvas
+                                            .load_in_bitmapimage_bytes(
+                                                bytes,
+                                                Some(pos),
+                                                appwindow.respect_borders(),
+                                            )
+                                            .await
+                                        {
+                                            error!(
+                                                "Failed to insert dropped in texture, Err: {e:?}"
+                                            );
+                                            appwindow
+                                                .overlays()
+                                                .dispatch_toast_error(&gettext(
+                                                    "Inserting file failed",
+                                                ));
+                                        }
+                                    });
                                 }
                             ));
                             accept_drop = true;
@@ -1485,19 +1501,21 @@ impl RnCanvas {
                             })
                             .collect::<Vec<_>>();
                         if !file_paths.is_empty() {
-                            glib::spawn_future_local(clone!(
+                            glib::idle_add_local_once(clone!(
                                 #[weak]
                                 appwindow,
-                                async move {
-                                    for file_path in file_paths {
-                                        appwindow
-                                            .open_file_w_dialogs(
-                                                gio::File::for_path(&file_path),
-                                                Some(pos),
-                                                true,
-                                            )
-                                            .await;
-                                    }
+                                move || {
+                                    glib::MainContext::default().spawn_local(async move {
+                                        for file_path in file_paths {
+                                            appwindow
+                                                .open_file_w_dialogs(
+                                                    gio::File::for_path(&file_path),
+                                                    Some(pos),
+                                                    true,
+                                                )
+                                                .await;
+                                        }
+                                    });
                                 }
                             ));
                             accept_drop = true;

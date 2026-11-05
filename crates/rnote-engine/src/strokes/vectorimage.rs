@@ -259,10 +259,8 @@ impl VectorImage {
 
         let x = insert_pos[0];
         let mut y = insert_pos[1];
-        let render_cache = hayro_svg::RenderCache::new();
 
-        // TODO: investigate if this can be parallelized with rayon's `par_iter()`
-        let svgs = page_range
+        let page_bounds = page_range
             .filter_map(|page_i| {
                 let page = pages.get(page_i)?;
                 let (intrinsic_width, intrinsic_height) = {
@@ -298,24 +296,28 @@ impl VectorImage {
                         }
                     }
                 };
+
+                Some((page_i, bounds))
+            })
+            .collect::<Vec<(usize, Aabb)>>();
+
+        page_bounds
+            .into_par_iter()
+            .map(|(page_i, bounds)| {
+                let page = pages
+                    .get(page_i)
+                    .ok_or_else(|| anyhow!("no page at index '{page_i}'"))?;
+                let render_cache = hayro_svg::RenderCache::new();
                 let svg_data = hayro_svg::convert(
                     page,
                     &render_cache,
                     &interpreter_settings,
                     &render_settings,
                 );
-                let svg = Svg { svg_data, bounds };
-
-                Some(svg)
-            })
-            .collect::<Vec<Svg>>();
-
-        svgs.into_par_iter()
-            .map(|svg| {
                 Self::from_svg_str(
-                    svg.svg_data.as_str(),
-                    svg.bounds.mins,
-                    ImageSizeOption::ImposeSize(svg.bounds.extents()),
+                    svg_data.as_str(),
+                    bounds.mins,
+                    ImageSizeOption::ImposeSize(bounds.extents()),
                 )
             })
             .collect()

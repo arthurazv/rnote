@@ -57,6 +57,11 @@ mod imp {
             obj.setup_action_accels();
             #[cfg(target_os = "macos")]
             obj.setup_macos_menubar();
+
+            // Pre-warm system font database in the background so the first SVG/PDF vector import is instant
+            rayon::spawn(|| {
+                once_cell::sync::Lazy::force(&rnote_engine::svg::USVG_FONTDB);
+            });
         }
 
         fn activate(&self) {

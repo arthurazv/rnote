@@ -177,37 +177,18 @@ impl BitmapImage {
 
         let x = insert_pos[0];
         let mut y = insert_pos[1];
-        let render_cache = hayro::RenderCache::new();
 
-        // TODO: investigate if this can be parallelized with rayon's `par_iter()`
-        let pngs = page_range
+        let page_layouts = page_range
             .map(|page_i| {
                 let page = pages
                     .get(page_i)
-                    .ok_or_else(|| anyhow::anyhow!("no page at index '{page_i}"))?;
+                    .ok_or_else(|| anyhow::anyhow!("no page at index '{page_i}'"))?;
                 let (intrinsic_width, intrinsic_height) = {
                     let dimensions = page.render_dimensions();
                     (dimensions.0 as f64, dimensions.1 as f64)
                 };
                 let width = intrinsic_width * page_zoom_fit;
                 let height = intrinsic_height * page_zoom_fit;
-                let render_settings = hayro::RenderSettings::default();
-                let pixmap_settings = hayro::PixmapSettings {
-                    x_scale: (pdf_import_prefs.bitmap_scalefactor * page_zoom_fit) as f32,
-                    y_scale: (pdf_import_prefs.bitmap_scalefactor * page_zoom_fit) as f32,
-                    bg_color: vello_cpu::color::AlphaColor::WHITE,
-                };
-
-                // TODO: implement drawing page borders.
-                // Possibly with vello-cpu, since it already is a dependency of hayro
-                let pixmap = hayro::render(
-                    page,
-                    &render_cache,
-                    &interpreter_settings,
-                    &render_settings,
-                    &pixmap_settings,
-                );
-                let png_data = pixmap.into_png()?;
 
                 // Center narrower pages within the import width when adjusting the document.
                 let page_x = if pdf_import_prefs.adjust_document {
@@ -235,13 +216,54 @@ impl BitmapImage {
                     }
                 };
 
-                Ok((png_data, image_pos, image_size))
+                Ok((page_i, image_pos, image_size))
             })
-            .collect::<anyhow::Result<Vec<(Vec<u8>, Vector2, Vector2)>>>()?;
+            .collect::<anyhow::Result<Vec<(usize, Vector2, Vector2)>>>()?;
 
-        pngs.into_par_iter()
-            .map(|(png_data, pos, size)| {
-                Self::from_image_bytes(&png_data, pos, ImageSizeOption::ImposeSize(size))
+        page_layouts
+            .into_par_iter()
+            .map(|(page_i, image_pos, image_size)| {
+                let page = pages
+                    .get(page_i)
+                    .ok_or_else(|| anyhow::anyhow!("no page at index '{page_i}'"))?;
+                let render_cache = hayro::RenderCache::new();
+                let render_settings = hayro::RenderSettings::default();
+                let pixmap_settings = hayro::PixmapSettings {
+                    x_scale: (pdf_import_prefs.bitmap_scalefactor * page_zoom_fit) as f32,
+                    y_scale: (pdf_import_prefs.bitmap_scalefactor * page_zoom_fit) as f32,
+                    bg_color: vello_cpu::color::AlphaColor::WHITE,
+                };
+
+                // TODO: implement drawing page borders.
+                // Possibly with vello-cpu, since it already is a dependency of hayro
+                let pixmap = hayro::render(
+                    page,
+                    &render_cache,
+                    &interpreter_settings,
+                    &render_settings,
+                    &pixmap_settings,
+                );
+                let pixel_width = u32::from(pixmap.width());
+                let pixel_height = u32::from(pixmap.height());
+                let image_bounds = Aabb::new(
+                    Vector2::ZERO,
+                    Vector2::new(pixel_width as f64, pixel_height as f64),
+                );
+                let image = Image {
+                    data: glib::Bytes::from(pixmap.data_as_u8_slice()),
+                    rectangle: Rectangle::from_p2d_aabb(image_bounds),
+                    pixel_width,
+                    pixel_height,
+                    memory_format: crate::image::ImageMemoryFormat::R8g8b8a8Premultiplied,
+                };
+                let mut transform = DAffine2::IDENTITY;
+                transform.append_translation_mut(image_pos + image_size * 0.5);
+                let rectangle = Rectangle {
+                    cuboid: p2d::shape::Cuboid::new(image_size * 0.5),
+                    affine: transform,
+                };
+
+                Ok(Self { image, rectangle })
             })
             .collect()
     }

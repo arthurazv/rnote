@@ -16,6 +16,37 @@ use rnote_engine::engine::import::{PdfImportPageSpacing, PdfImportPagesType};
 use std::sync::Arc;
 use tracing::{debug, error};
 
+fn build_all_supported_filter() -> FileFilter {
+    let all_filter = FileFilter::new();
+    all_filter.set_name(Some(&gettext("All Supported Files")));
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
+        for pat in [
+            "*.rnote", "*.pdf", "*.svg", "*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.tiff",
+            "*.tif", "*.gif", "*.txt", "*.xopp",
+        ] {
+            all_filter.add_pattern(pat);
+        }
+    } else {
+        all_filter.add_mime_type("application/x-xopp");
+        all_filter.add_mime_type("application/pdf");
+        all_filter.add_mime_type("image/svg+xml");
+        all_filter.add_mime_type("image/png");
+        all_filter.add_mime_type("image/jpeg");
+        all_filter.add_mime_type("image/*");
+        all_filter.add_mime_type("text/plain");
+        all_filter.add_mime_type("application/rnote");
+    }
+    if cfg!(target_os = "macos") {
+        for suffix in [
+            "rnote", "pdf", "svg", "png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif",
+            "txt", "xopp",
+        ] {
+            all_filter.add_suffix(suffix);
+        }
+    }
+    all_filter
+}
+
 /// Opens a new rnote save file in a new tab
 pub(crate) async fn filedialog_open_doc(appwindow: &RnAppWindow) {
     let filter = FileFilter::new();
@@ -30,8 +61,11 @@ pub(crate) async fn filedialog_open_doc(appwindow: &RnAppWindow) {
     filter.add_suffix("rnote");
     filter.set_name(Some(&gettext(".rnote")));
 
+    let all_supported_filter = build_all_supported_filter();
+
     let filter_list = gio::ListStore::new::<FileFilter>();
     filter_list.append(&filter);
+    filter_list.append(&all_supported_filter);
 
     let filedialog = FileDialog::builder()
         .title(gettext("Open File"))
@@ -60,43 +94,7 @@ pub(crate) async fn filedialog_open_doc(appwindow: &RnAppWindow) {
 pub(crate) async fn filedialog_import_file(appwindow: &RnAppWindow) {
     let filter_list = gio::ListStore::new::<FileFilter>();
 
-    let all_filter = FileFilter::new();
-    all_filter.set_name(Some(&gettext("All Supported Files")));
-    if cfg!(any(target_os = "windows", target_os = "macos")) {
-        all_filter.add_pattern("*.xopp");
-        all_filter.add_pattern("*.pdf");
-        all_filter.add_pattern("*.svg");
-        all_filter.add_pattern("*.png");
-        all_filter.add_pattern("*.jpg");
-        all_filter.add_pattern("*.jpeg");
-        all_filter.add_pattern("*.webp");
-        all_filter.add_pattern("*.bmp");
-        all_filter.add_pattern("*.tiff");
-        all_filter.add_pattern("*.txt");
-        all_filter.add_pattern("*.rnote");
-    } else {
-        all_filter.add_mime_type("application/x-xopp");
-        all_filter.add_mime_type("application/pdf");
-        all_filter.add_mime_type("image/svg+xml");
-        all_filter.add_mime_type("image/png");
-        all_filter.add_mime_type("image/jpeg");
-        all_filter.add_mime_type("image/*");
-        all_filter.add_mime_type("text/plain");
-        all_filter.add_mime_type("application/rnote");
-    }
-    if cfg!(target_os = "macos") {
-        all_filter.add_suffix("xopp");
-        all_filter.add_suffix("pdf");
-        all_filter.add_suffix("svg");
-        all_filter.add_suffix("png");
-        all_filter.add_suffix("jpg");
-        all_filter.add_suffix("jpeg");
-        all_filter.add_suffix("webp");
-        all_filter.add_suffix("bmp");
-        all_filter.add_suffix("tiff");
-        all_filter.add_suffix("txt");
-        all_filter.add_suffix("rnote");
-    }
+    let all_filter = build_all_supported_filter();
     filter_list.append(&all_filter);
 
     let pdf_filter = FileFilter::new();
@@ -114,24 +112,20 @@ pub(crate) async fn filedialog_import_file(appwindow: &RnAppWindow) {
     let img_filter = FileFilter::new();
     img_filter.set_name(Some(&gettext("Images (*.png, *.jpg, *.jpeg, *.svg, ...)")));
     if cfg!(any(target_os = "windows", target_os = "macos")) {
-        img_filter.add_pattern("*.png");
-        img_filter.add_pattern("*.jpg");
-        img_filter.add_pattern("*.jpeg");
-        img_filter.add_pattern("*.svg");
-        img_filter.add_pattern("*.webp");
-        img_filter.add_pattern("*.bmp");
-        img_filter.add_pattern("*.tiff");
+        for pat in [
+            "*.png", "*.jpg", "*.jpeg", "*.svg", "*.webp", "*.bmp", "*.tiff", "*.tif", "*.gif",
+        ] {
+            img_filter.add_pattern(pat);
+        }
     } else {
         img_filter.add_mime_type("image/*");
     }
     if cfg!(target_os = "macos") {
-        img_filter.add_suffix("png");
-        img_filter.add_suffix("jpg");
-        img_filter.add_suffix("jpeg");
-        img_filter.add_suffix("svg");
-        img_filter.add_suffix("webp");
-        img_filter.add_suffix("bmp");
-        img_filter.add_suffix("tiff");
+        for suffix in [
+            "png", "jpg", "jpeg", "svg", "webp", "bmp", "tiff", "tif", "gif",
+        ] {
+            img_filter.add_suffix(suffix);
+        }
     }
     filter_list.append(&img_filter);
 
@@ -166,11 +160,12 @@ pub(crate) async fn filedialog_import_file(appwindow: &RnAppWindow) {
 
 /// Check for a pdf encryption and request a password if needed from the user
 ///
-/// Returns a password Option and a boolean weather the user canceled the file import or not
+/// Returns the parsed Pdf instance, password Option, and a boolean whether the user canceled the file import or not
 pub(crate) async fn pdf_encryption_check_and_dialog(
     appwindow: &RnAppWindow,
     input_file: &gio::File,
-) -> (Option<String>, bool) {
+    pdf_data: Arc<Vec<u8>>,
+) -> (Option<hayro_syntax::Pdf>, Option<String>, bool) {
     let builder = Builder::from_resource(
         (String::from(config::APP_IDPATH) + "ui/dialogs/import.ui").as_str(),
     );
@@ -243,13 +238,6 @@ pub(crate) async fn pdf_encryption_check_and_dialog(
     dialog_import_pdf_password.set_body(&dialog_body);
 
     let mut password: Option<String> = None;
-    let pdf_data = match input_file.load_bytes_future().await {
-        Ok(data) => Arc::new(data.0.to_vec()),
-        Err(err) => {
-            error!("Loading bytes from file failed, Err: {err:?}");
-            return (None, true);
-        }
-    };
 
     loop {
         let pdf_res = if let Some(password) = password.as_ref() {
@@ -258,22 +246,23 @@ pub(crate) async fn pdf_encryption_check_and_dialog(
             hayro_syntax::Pdf::new(pdf_data.clone())
         };
         match pdf_res {
-            Ok(_) => return (password, false),
+            Ok(pdf) => return (Some(pdf), password, false),
             Err(hayro_syntax::LoadPdfError::Decryption(
                 hayro_syntax::DecryptionError::PasswordProtected,
             )) => {
+                appwindow.overlays().progressbar_abort();
                 dialog_import_pdf_password.present(appwindow.root().as_ref());
                 pdf_password_entry.grab_focus();
 
                 match rx.next().await {
                     Some((new_password, cancel)) => {
                         if cancel {
-                            return (None, true);
+                            return (None, None, true);
                         }
                         password = new_password;
                     }
                     None => {
-                        return (None, true);
+                        return (None, None, true);
                     }
                 }
                 animation.play();
@@ -281,7 +270,7 @@ pub(crate) async fn pdf_encryption_check_and_dialog(
             }
             Err(err) => {
                 error!("Creating Pdf instance failed, Err: {err:?}");
-                return (None, true);
+                return (None, None, true);
             }
         }
     }
@@ -296,10 +285,13 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     input_file: gio::File,
     target_pos: Option<Vector2>,
 ) -> anyhow::Result<bool> {
-    let (password, cancel) = pdf_encryption_check_and_dialog(appwindow, &input_file).await;
+    let pdf_data = Arc::new(input_file.load_bytes_future().await?.0.to_vec());
+    let (pdf, password, cancel) =
+        pdf_encryption_check_and_dialog(appwindow, &input_file, pdf_data.clone()).await;
     if cancel {
         return Ok(false);
     }
+    let pdf = pdf.ok_or_else(|| anyhow!("Creating Pdf instance failed"))?;
 
     let builder = Builder::from_resource(
         (String::from(config::APP_IDPATH) + "ui/dialogs/import.ui").as_str(),
@@ -451,14 +443,6 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
         }
     ));
 
-    let pdf_data = Arc::new(input_file.load_bytes_future().await?.0.to_vec());
-    let pdf = if let Some(password) = password.as_ref() {
-        hayro_syntax::Pdf::new_with_password(pdf_data, password)
-            .map_err(|err| anyhow!("Creating Pdf instance failed, Err: {err:?}"))?
-    } else {
-        hayro_syntax::Pdf::new(pdf_data)
-            .map_err(|err| anyhow!("Creating Pdf instance failed, Err: {err:?}"))?
-    };
     let pdf_metadata = pdf.metadata();
 
     let file_name = input_file.basename().map_or_else(
@@ -534,75 +518,34 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     // set focus on enter button for quick confirmation
     dialog.set_focus(Some(&import_pdf_button_confirm));
 
-    // Present than wait for a response from the dialog
+    // Drop parsed Pdf handle so `pdf_data` can be unwrapped without cloning when confirmed
+    drop(pdf);
+
+    // Stop progressbar pulsing while waiting for user confirmation in the dialog
+    appwindow.overlays().progressbar_abort();
+
+    // Present then wait for a response from the dialog
     dialog.present(appwindow.root().as_ref());
 
     match rx_confirm.next().await {
         Some((confirm, dialog_closed)) => {
+            let page_range = (pdf_page_start_row.value() as usize).saturating_sub(1)
+                ..pdf_page_end_row.value() as usize;
             if !dialog_closed {
                 dialog.close();
             }
             if confirm {
-                let (tx_import, mut rx_import) =
-                    futures::channel::mpsc::unbounded::<anyhow::Result<bool>>();
-
-                glib::spawn_future_local(clone!(
-                    #[weak]
-                    pdf_page_start_row,
-                    #[weak]
-                    pdf_page_end_row,
-                    #[weak]
-                    input_file,
-                    #[weak]
-                    appwindow,
-                    #[weak]
-                    canvas,
-                    async move {
-                        let page_range = (pdf_page_start_row.value() as usize).saturating_sub(1)
-                            ..pdf_page_end_row.value() as usize;
-                        let (bytes, _) = match input_file.load_bytes_future().await {
-                            Ok(res) => res,
-                            Err(err) => {
-                                if let Err(e) = tx_import.unbounded_send(Err(err.into())) {
-                                    error!(
-                                        "Failed to load file, but failed to send signal through channel. Err: {e:?}"
-                                    );
-                                }
-                                return;
-                            }
-                        };
-
-                        if let Err(e) = canvas
-                            .load_in_pdf_bytes(
-                                &appwindow,
-                                bytes.to_vec(),
-                                target_pos,
-                                Some(page_range),
-                                password,
-                            )
-                            .await
-                            && let Err(e) = tx_import.unbounded_send(Err(e))
-                        {
-                            error!(
-                                "Failed to load PDF, but failed to send signal through channel. Err: {e:?}"
-                            );
-                            return;
-                        };
-
-                        if let Err(e) = tx_import.unbounded_send(Ok(true)) {
-                            error!(
-                                "PDF file imported, but failed to send signal through channel. Err: {e:?}"
-                            );
-                        }
-                    }
-                ));
-
-                match rx_import.next().await {
-                    Some(res) => res,
-                    None => Err(anyhow::anyhow!(
-                        "Channel closed before receiving a response from loader thread."
-                    )),
-                }
+                appwindow.overlays().progressbar_start_pulsing();
+                canvas
+                    .load_in_pdf_bytes(
+                        appwindow,
+                        Arc::unwrap_or_clone(pdf_data),
+                        target_pos,
+                        Some(page_range),
+                        password,
+                    )
+                    .await?;
+                Ok(true)
             } else {
                 Ok(false)
             }
@@ -667,7 +610,7 @@ pub(crate) async fn dialog_import_xopp_w_prefs(
     }));
 
     import_xopp_button_confirm.connect_clicked(clone!(move |_| {
-        if let Err(e) = tx_confirm.unbounded_send((true,false)) {
+        if let Err(e) = tx_confirm.unbounded_send((true, false)) {
             error!(
                 "Xopp import dialog confirmed, but failed to send signal through channel. Err: {e:?}"
             );
@@ -685,7 +628,9 @@ pub(crate) async fn dialog_import_xopp_w_prefs(
 
     dialog.set_focus(Some(&import_xopp_button_confirm));
 
-    // Present than wait for a response from the dialog
+    appwindow.overlays().progressbar_abort();
+
+    // Present then wait for a response from the dialog
     dialog.present(appwindow.root().as_ref());
 
     match rx_confirm.next().await {
@@ -694,52 +639,10 @@ pub(crate) async fn dialog_import_xopp_w_prefs(
                 dialog.close();
             }
             if confirm {
-                let (tx_import, mut rx_import) =
-                    futures::channel::mpsc::unbounded::<anyhow::Result<bool>>();
-
-                glib::spawn_future_local(clone!(
-                    #[weak]
-                    input_file,
-                    #[weak]
-                    appwindow,
-                    #[weak]
-                    canvas,
-                    async move {
-                        let (bytes, _) = match input_file.load_bytes_future().await {
-                            Ok(res) => res,
-                            Err(err) => {
-                                if let Err(e) = tx_import.unbounded_send(Err(err.into())) {
-                                    error!(
-                                        "Failed to load file, but failed to send signal through channel. Err: {e:?}"
-                                    );
-                                }
-                                return;
-                            }
-                        };
-                        if let Err(e) = canvas.load_in_xopp_bytes(&appwindow, bytes.to_vec()).await
-                        {
-                            if let Err(e) = tx_import.unbounded_send(Err(e)) {
-                                error!(
-                                    "Failed to load XOPP, but failed to send signal through channel. Err: {e:?}"
-                                );
-                            }
-                            return;
-                        };
-
-                        if let Err(e) = tx_import.unbounded_send(Ok(true)) {
-                            error!(
-                                "XOPP file imported, but failed to send signal through channel. Err: {e:?}"
-                            );
-                        }
-                    }
-                ));
-
-                match rx_import.next().await {
-                    Some(res) => res,
-                    None => Err(anyhow::anyhow!(
-                        "Channel closed before receiving a response from loader thread."
-                    )),
-                }
+                appwindow.overlays().progressbar_start_pulsing();
+                let (bytes, _) = input_file.load_bytes_future().await?;
+                canvas.load_in_xopp_bytes(appwindow, bytes.to_vec()).await?;
+                Ok(true)
             } else {
                 Ok(false)
             }

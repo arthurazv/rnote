@@ -9,10 +9,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 echo "==> Configuring Meson build..."
-if [ ! -d "_build" ]; then
+if [ ! -f "_build/build.ninja" ]; then
     meson setup _build --prefix=/tmp/rnote_install -Dprofile=default
-else
-    meson setup _build --reconfigure --prefix=/tmp/rnote_install -Dprofile=default
 fi
 
 echo "==> Compiling Rnote..."

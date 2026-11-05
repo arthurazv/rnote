@@ -488,12 +488,14 @@ fn create_files_list_header_factory(_appwindow: &RnAppWindow) -> SignalListItemF
 }
 
 fn create_folders_filter() -> EveryFilter {
-    let file_filter = FileFilter::new();
-    file_filter.add_mime_type("inode/directory");
+    let dir_filter = CustomFilter::new(|obj| {
+        obj.downcast_ref::<gio::FileInfo>()
+            .is_some_and(|info| info.file_type() == gio::FileType::Directory)
+    });
     let hidden_filter = create_hidden_filter();
 
     let every_filter = EveryFilter::new();
-    every_filter.append(file_filter);
+    every_filter.append(dir_filter);
     every_filter.append(hidden_filter);
     every_filter
 }
@@ -536,6 +538,11 @@ fn create_files_filter() -> EveryFilter {
     file_filter.add_suffix("png");
     file_filter.add_suffix("jpg");
     file_filter.add_suffix("jpeg");
+    file_filter.add_suffix("webp");
+    file_filter.add_suffix("bmp");
+    file_filter.add_suffix("tiff");
+    file_filter.add_suffix("tif");
+    file_filter.add_suffix("gif");
     file_filter.add_suffix("txt");
     let hidden_filter = create_hidden_filter();
 
