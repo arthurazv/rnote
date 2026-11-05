@@ -74,11 +74,16 @@ Este documento consolida o diagnóstico técnico completo, os arquivos alterados
 8. `build-aux/macos/`:
    - `Rnote.icns` e `RnoteDoc.icns` nativos Retina.
    - Script gerador `generate_icons.py`.
+   - Script de compilação e empacotamento local: `build_local.sh --install`.
 
-9. `.github/workflows/build_macos.yml`:
-   - Empacotamento dos ícones `.icns` em `Contents/Resources/`.
-   - Inclusão das definições `CFBundleDocumentTypes` e `UTExportedTypeDeclarations` no `Info.plist`.
+9. `crates/rnote-ui/src/filetype.rs`:
+   - Suporte a Apple UTIs (`com.adobe.pdf`, `public.png`, `public.jpeg`, `public.svg-image`, `com.github.flxzt.rnote.document`).
+   - Fallback de extensão insensível a maiúsculas/minúsculas e extração via URI/basename.
 
-10. **Deploy:**
-    - Compilado via GitHub Actions (Run ID `41921964846`).
-    - Binário, recursos e associações instalados e ativos em `/Applications/Rnote.app`.
+10. `crates/rnote-ui/src/canvas/mod.rs` & `crates/rnote-ui/src/appwindow/actions.rs`:
+    - Suporte a `gdk::FileList`, `gdk::Texture` e URIs `file://` no Drag & Drop do Finder.
+    - Suporte a colar imagens (`gdk::Texture`) e arquivos copiados (`gdk::FileList`) da área de transferência via `⌘V`.
+
+11. **Deploy & Compilação Local:**
+    - Ferramental nativo instalado no Mac: `rustc`, `cargo`, `meson`, `ninja`, `cmake`, `appstream`.
+    - Executável compilado nativamente e ativo em `/Applications/Rnote.app`.
