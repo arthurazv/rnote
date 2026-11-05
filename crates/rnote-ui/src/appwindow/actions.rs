@@ -264,6 +264,8 @@ impl RnAppWindow {
         // Toggle Highlighter
         let action_toggle_highlighter = gio::SimpleAction::new("toggle-highlighter", None);
         self.add_action(&action_toggle_highlighter);
+        let action_tool_snippet = gio::SimpleAction::new("tool-snippet", None);
+        self.add_action(&action_tool_snippet);
         action_toggle_highlighter.connect_activate(clone!(
             #[weak(rename_to = appwindow)]
             self,
@@ -289,6 +291,35 @@ impl RnAppWindow {
                     appwindow.overlays().dispatch_toast_text(&gettext("Highlighter active"), Some(std::time::Duration::from_secs(1)));
                 }
                 appwindow.refresh_ui();
+            }
+        ));
+
+        // Tool Snippet / Crop
+        action_tool_snippet.connect_activate(clone!(
+            #[weak(rename_to=appwindow)]
+            self,
+            move |_, _| {
+                appwindow.set_pen_style_with_lock(PenStyle::Tools);
+                appwindow
+                    .engine_config()
+                    .write()
+                    .pens_config
+                    .tools_config
+                    .style = rnote_engine::pens::pensconfig::toolsconfig::ToolStyle::Snippet;
+                appwindow
+                    .overlays()
+                    .penssidebar()
+                    .tools_page()
+                    .set_tool_style(rnote_engine::pens::pensconfig::toolsconfig::ToolStyle::Snippet);
+                if let Some(canvas) = appwindow.active_tab_canvas() {
+                    let widget_flags = canvas.engine_mut().reinstall_pen_current_style();
+                    canvas.emit_handle_widget_flags(widget_flags);
+                }
+                appwindow.refresh_ui();
+                appwindow.overlays().dispatch_toast_text(
+                    &gettext("Snippet / Crop tool active. Drag to copy, Shift+Drag to cut."),
+                    Some(std::time::Duration::from_secs(2)),
+                );
             }
         ));
 
@@ -1310,6 +1341,7 @@ impl RnAppWindow {
             app.set_accels_for_action("win.text-underline", &["<Meta>u", "<Primary>u", "<Ctrl>u"]);
             app.set_accels_for_action("win.pen-style::brush", &["<Meta>1", "<Primary>1", "<Ctrl>1", "<Ctrl>KP_1"]);
             app.set_accels_for_action("win.toggle-highlighter", &["<Meta><Shift>h", "<Primary><Shift>h", "<Ctrl><Shift>h"]);
+            app.set_accels_for_action("win.tool-snippet", &["<Meta><Shift>x", "<Primary><Shift>x", "<Ctrl><Shift>x"]);
             app.set_accels_for_action("win.pen-style::shaper", &["<Meta>2", "<Primary>2", "<Ctrl>2", "<Ctrl>KP_2"]);
             app.set_accels_for_action("win.pen-style::typewriter", &["<Meta>3", "<Primary>3", "<Ctrl>3", "<Ctrl>KP_3"]);
             app.set_accels_for_action("win.pen-style::eraser", &["<Meta>4", "<Primary>4", "<Ctrl>4", "<Ctrl>KP_4"]);
@@ -1372,6 +1404,7 @@ impl RnAppWindow {
             app.set_accels_for_action("win.text-underline", &["<Primary>u", "<Ctrl>u"]);
             app.set_accels_for_action("win.pen-style::brush", &["<Primary>1", "<Ctrl>1", "<Ctrl>KP_1"]);
             app.set_accels_for_action("win.toggle-highlighter", &["<Primary><Shift>h", "<Ctrl><Shift>h"]);
+            app.set_accels_for_action("win.tool-snippet", &["<Primary><Shift>x", "<Ctrl><Shift>x"]);
             app.set_accels_for_action("win.pen-style::shaper", &["<Primary>2", "<Ctrl>2", "<Ctrl>KP_2"]);
             app.set_accels_for_action("win.pen-style::typewriter", &["<Primary>3", "<Ctrl>3", "<Ctrl>KP_3"]);
             app.set_accels_for_action("win.pen-style::eraser", &["<Primary>4", "<Ctrl>4", "<Ctrl>KP_4"]);

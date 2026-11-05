@@ -101,6 +101,35 @@
                       </object>
                     </child>
                     <child>
+                      <object class="AdwComboRow" id="pdf_import_destination_row">
+                        <property name="title" translatable="yes">Destination</property>
+                        <property name="subtitle" translatable="yes">Import into a single document or each page in a separate tab</property>
+                        <property name="model">
+                          <object class="GtkStringList">
+                            <items>
+                              <item translatable="yes">Single Document</item>
+                              <item translatable="yes">Each Page in a New Tab</item>
+                            </items>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwComboRow" id="pdf_import_page_format_row">
+                        <property name="title" translatable="yes">Page Format</property>
+                        <property name="subtitle" translatable="yes">Page size for imported document / tabs</property>
+                        <property name="model">
+                          <object class="GtkStringList">
+                            <items>
+                              <item translatable="yes">Original Size</item>
+                              <item translatable="yes">Fixed A4</item>
+                              <item translatable="yes">Custom / Current</item>
+                            </items>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
                       <object class="AdwSwitchRow" id="pdf_import_adjust_document_row">
                         <property name="title" translatable="yes">Adjust Document</property>
                         <property name="subtitle" translatable="yes">Whether the document layout should be adjusted to the Pdf</property>

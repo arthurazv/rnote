@@ -1,12 +1,14 @@
 // Modules
 mod laser;
 mod offsetcamera;
+mod snippet;
 mod verticalspace;
 mod zoom;
 
 // Re-Exports
 use laser::LaserTool;
 use offsetcamera::OffsetCameraTool;
+use snippet::SnippetTool;
 use verticalspace::VerticalSpaceTool;
 use zoom::ZoomTool;
 
@@ -40,6 +42,7 @@ pub struct Tools {
     offsetcamera_tool: OffsetCameraTool,
     zoom_tool: ZoomTool,
     laser_tool: LaserTool,
+    snippet_tool: SnippetTool,
 }
 
 impl PenBehaviour for Tools {
@@ -73,6 +76,7 @@ impl PenBehaviour for Tools {
             ToolStyle::OffsetCamera => self.offsetcamera_tool.handle_event(event, now, engine_view),
             ToolStyle::Zoom => self.zoom_tool.handle_event(event, now, engine_view),
             ToolStyle::Laser => self.laser_tool.handle_event(event, now, engine_view),
+            ToolStyle::Snippet => self.snippet_tool.handle_event(event, now, engine_view),
         }
     }
 
@@ -91,6 +95,7 @@ impl DrawableOnDoc for Tools {
             ToolStyle::OffsetCamera => self.offsetcamera_tool.bounds_on_doc(engine_view),
             ToolStyle::Zoom => self.zoom_tool.bounds_on_doc(engine_view),
             ToolStyle::Laser => self.laser_tool.bounds_on_doc(engine_view),
+            ToolStyle::Snippet => self.snippet_tool.bounds_on_doc(engine_view),
         }
     }
 
@@ -113,6 +118,9 @@ impl DrawableOnDoc for Tools {
             }
             ToolStyle::Laser => {
                 self.laser_tool.draw_on_doc(cx, engine_view)?;
+            }
+            ToolStyle::Snippet => {
+                self.snippet_tool.draw_on_doc(cx, engine_view)?;
             }
         }
 

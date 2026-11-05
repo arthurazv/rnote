@@ -386,6 +386,29 @@ impl RnAppWindow {
             canvas.enable_text_input(enable_text_input);
         }
 
+        if let Some(content) = widget_flags.clipboard_content {
+            let gdk_content_provider = gdk::ContentProvider::new_union(
+                content
+                    .into_iter()
+                    .map(|(data, mime_type)| {
+                        gdk::ContentProvider::for_bytes(
+                            mime_type.as_str(),
+                            &glib::Bytes::from_owned(data),
+                        )
+                    })
+                    .collect::<Vec<gdk::ContentProvider>>()
+                    .as_slice(),
+            );
+            if let Err(e) = self.clipboard().set_content(Some(&gdk_content_provider)) {
+                error!("Failed to set clipboard content from widget flags: {e:?}");
+            } else {
+                let toast_text = widget_flags
+                    .clipboard_toast
+                    .unwrap_or_else(|| gettext("Snippet copied to clipboard! Paste with ⌘V"));
+                self.overlays().dispatch_toast_text(&toast_text, Some(std::time::Duration::from_secs(2)));
+            }
+        }
+
         // Keep the pages navigator in sync with the active canvas.
         if self
             .active_tab_canvas()
@@ -713,25 +736,33 @@ impl RnAppWindow {
                 }
             }
             FileType::VectorImageFile => {
-                let canvas = self
-                    .active_tab_wrapper()
-                    .ok_or_else(|| anyhow::anyhow!("No active tab to import into"))?
-                    .canvas();
+                let (wrapper, is_new) = match self.active_tab_wrapper() {
+                    Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
+                    _ => (self.new_canvas_wrapper(), true),
+                };
+                let canvas = wrapper.canvas();
                 let (bytes, _) = input_file.load_bytes_future().await?;
                 canvas
                     .load_in_vectorimage_bytes(bytes.to_vec(), target_pos, self.respect_borders())
                     .await?;
+                if is_new {
+                    self.append_wrapper_new_tab(&wrapper);
+                }
                 true
             }
             FileType::BitmapImageFile => {
-                let canvas = self
-                    .active_tab_wrapper()
-                    .ok_or_else(|| anyhow::anyhow!("No active tab to import into"))?
-                    .canvas();
+                let (wrapper, is_new) = match self.active_tab_wrapper() {
+                    Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
+                    _ => (self.new_canvas_wrapper(), true),
+                };
+                let canvas = wrapper.canvas();
                 let (bytes, _) = input_file.load_bytes_future().await?;
                 canvas
                     .load_in_bitmapimage_bytes(bytes.to_vec(), target_pos, self.respect_borders())
                     .await?;
+                if is_new {
+                    self.append_wrapper_new_tab(&wrapper);
+                }
                 true
             }
             FileType::XoppFile => {
@@ -746,20 +777,30 @@ impl RnAppWindow {
                 file_imported
             }
             FileType::PdfFile => {
-                let canvas = self
-                    .active_tab_wrapper()
-                    .ok_or_else(|| anyhow::anyhow!("No active tab to import into"))?
-                    .canvas();
-                dialogs::import::dialog_import_pdf_w_prefs(self, &canvas, input_file, target_pos)
-                    .await?
+                let (wrapper, is_new) = match self.active_tab_wrapper() {
+                    Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
+                    _ => (self.new_canvas_wrapper(), true),
+                };
+                let canvas = wrapper.canvas();
+                let file_imported =
+                    dialogs::import::dialog_import_pdf_w_prefs(self, &canvas, input_file, target_pos)
+                        .await?;
+                if file_imported && is_new && !canvas.empty() {
+                    self.append_wrapper_new_tab(&wrapper);
+                }
+                file_imported
             }
             FileType::PlaintextFile => {
-                let canvas = self
-                    .active_tab_wrapper()
-                    .ok_or_else(|| anyhow::anyhow!("No active tab to import into"))?
-                    .canvas();
+                let (wrapper, is_new) = match self.active_tab_wrapper() {
+                    Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
+                    _ => (self.new_canvas_wrapper(), true),
+                };
+                let canvas = wrapper.canvas();
                 let (bytes, _) = input_file.load_bytes_future().await?;
                 canvas.load_in_text(String::from_utf8(bytes.to_vec())?, target_pos)?;
+                if is_new {
+                    self.append_wrapper_new_tab(&wrapper);
+                }
                 true
             }
             FileType::Folder => {

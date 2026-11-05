@@ -47,6 +47,33 @@ fn build_all_supported_filter() -> FileFilter {
     all_filter
 }
 
+pub(crate) fn default_initial_folder(appwindow: &RnAppWindow) -> gio::File {
+    if let Some(dir) = appwindow.sidebar().workspacebrowser().dir_list_dir() {
+        return gio::File::for_path(dir);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let icloud_base = glib::home_dir().join("Library/Mobile Documents/com~apple~CloudDocs");
+        if icloud_base.exists() {
+            let icloud_rnote = icloud_base.join("Rnote");
+            let _ = std::fs::create_dir_all(&icloud_rnote);
+            if icloud_rnote.exists() {
+                return gio::File::for_path(icloud_rnote);
+            }
+            return gio::File::for_path(icloud_base);
+        }
+    }
+    if let Some(doc_dir) = glib::user_special_dir(glib::UserDirectory::Documents) {
+        let rnote_dir = doc_dir.join("Rnote");
+        let _ = std::fs::create_dir_all(&rnote_dir);
+        if rnote_dir.exists() {
+            return gio::File::for_path(rnote_dir);
+        }
+        return gio::File::for_path(doc_dir);
+    }
+    gio::File::for_path(glib::home_dir())
+}
+
 /// Opens a new rnote save file in a new tab
 pub(crate) async fn filedialog_open_doc(appwindow: &RnAppWindow) {
     let filter = FileFilter::new();
@@ -64,20 +91,18 @@ pub(crate) async fn filedialog_open_doc(appwindow: &RnAppWindow) {
     let all_supported_filter = build_all_supported_filter();
 
     let filter_list = gio::ListStore::new::<FileFilter>();
-    filter_list.append(&filter);
     filter_list.append(&all_supported_filter);
+    filter_list.append(&filter);
 
     let filedialog = FileDialog::builder()
         .title(gettext("Open File"))
         .modal(true)
         .accept_label(gettext("Open"))
         .filters(&filter_list)
-        .default_filter(&filter)
+        .default_filter(&all_supported_filter)
         .build();
 
-    if let Some(current_workspace_dir) = appwindow.sidebar().workspacebrowser().dir_list_dir() {
-        filedialog.set_initial_folder(Some(&gio::File::for_path(current_workspace_dir)));
-    }
+    filedialog.set_initial_folder(Some(&default_initial_folder(appwindow)));
 
     match filedialog.open_future(Some(appwindow)).await {
         Ok(selected_file) => {
@@ -142,9 +167,7 @@ pub(crate) async fn filedialog_import_file(appwindow: &RnAppWindow) {
         .default_filter(&all_filter)
         .build();
 
-    if let Some(current_workspace_dir) = appwindow.sidebar().workspacebrowser().dir_list_dir() {
-        dialog.set_initial_folder(Some(&gio::File::for_path(current_workspace_dir)));
-    }
+    dialog.set_initial_folder(Some(&default_initial_folder(appwindow)));
 
     match dialog.open_future(Some(appwindow)).await {
         Ok(selected_file) => {
@@ -299,6 +322,10 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     let dialog: adw::Dialog = builder.object("dialog_import_pdf_w_prefs").unwrap();
     let pdf_page_start_row: adw::SpinRow = builder.object("pdf_page_start_row").unwrap();
     let pdf_page_end_row: adw::SpinRow = builder.object("pdf_page_end_row").unwrap();
+    let pdf_import_destination_row: adw::ComboRow =
+        builder.object("pdf_import_destination_row").unwrap();
+    let pdf_import_page_format_row: adw::ComboRow =
+        builder.object("pdf_import_page_format_row").unwrap();
     let pdf_info_label: Label = builder.object("pdf_info_label").unwrap();
     let pdf_import_width_row: adw::SpinRow = builder.object("pdf_import_width_row").unwrap();
     let pdf_import_page_spacing_row: adw::ComboRow =
@@ -531,20 +558,110 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
         Some((confirm, dialog_closed)) => {
             let page_range = (pdf_page_start_row.value() as usize).saturating_sub(1)
                 ..pdf_page_end_row.value() as usize;
+            let destination = pdf_import_destination_row.selected();
+            let page_format = pdf_import_page_format_row.selected();
             if !dialog_closed {
                 dialog.close();
             }
             if confirm {
                 appwindow.overlays().progressbar_start_pulsing();
-                canvas
-                    .load_in_pdf_bytes(
-                        appwindow,
-                        Arc::unwrap_or_clone(pdf_data),
-                        target_pos,
-                        Some(page_range),
-                        password,
-                    )
-                    .await?;
+
+                if destination == 1 {
+                    // Each Page in a New Tab
+                    let pdf_data_vec = Arc::unwrap_or_clone(pdf_data);
+                    for page_idx in page_range {
+                        let wrapper = appwindow.new_canvas_wrapper();
+                        let page_canvas = wrapper.canvas();
+
+                        let parsed_dims = if let Ok(pdf_parsed) = if let Some(ref pw) = password {
+                            hayro_syntax::Pdf::new_with_password(Arc::new(pdf_data_vec.clone()), pw)
+                        } else {
+                            hayro_syntax::Pdf::new(Arc::new(pdf_data_vec.clone()))
+                        } {
+                            pdf_parsed.pages().get(page_idx).map(|p| p.render_dimensions())
+                        } else {
+                            None
+                        };
+
+                        match page_format {
+                            0 => {
+                                // Original Size
+                                if let Some((pw, ph)) = parsed_dims {
+                                    let mut engine = page_canvas.engine_mut();
+                                    engine.document.config.format.set_width(pw as f64);
+                                    engine.document.config.format.set_height(ph as f64);
+                                    let _ = engine.set_doc_layout(rnote_engine::document::Layout::FixedSize);
+                                }
+                            }
+                            1 => {
+                                // Fixed A4
+                                let orientation = if let Some((pw, ph)) = parsed_dims {
+                                    if pw > ph {
+                                        rnote_engine::document::format::Orientation::Landscape
+                                    } else {
+                                        rnote_engine::document::format::Orientation::Portrait
+                                    }
+                                } else {
+                                    rnote_engine::document::format::Orientation::Portrait
+                                };
+                                let (w_mm, h_mm) = if orientation == rnote_engine::document::format::Orientation::Landscape {
+                                    (297.0, 210.0)
+                                } else {
+                                    (210.0, 297.0)
+                                };
+                                let mut engine = page_canvas.engine_mut();
+                                let dpi = engine.document.config.format.dpi();
+                                let w_px = (w_mm / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH) * dpi;
+                                let h_px = (h_mm / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH) * dpi;
+                                engine.document.config.format.set_width(w_px);
+                                engine.document.config.format.set_height(h_px);
+                                let _ = engine.set_doc_layout(rnote_engine::document::Layout::FixedSize);
+                            }
+                            _ => {
+                                // Custom / Current format from default preset
+                            }
+                        }
+
+                        page_canvas
+                            .load_in_pdf_bytes(
+                                appwindow,
+                                pdf_data_vec.clone(),
+                                target_pos,
+                                Some(page_idx..page_idx + 1),
+                                password.clone(),
+                            )
+                            .await?;
+
+                        let tab_page = appwindow.append_wrapper_new_tab(&wrapper);
+                        tab_page.set_title(&format!("{file_name} - {}", page_idx + 1));
+                    }
+                } else {
+                    // Single Document in current canvas
+                    if page_format == 1 {
+                        // Fixed A4
+                        let mut engine = canvas.engine_mut();
+                        let orientation = engine.document.config.format.orientation();
+                        let (w_mm, h_mm) = if orientation == rnote_engine::document::format::Orientation::Landscape {
+                            (297.0, 210.0)
+                        } else {
+                            (210.0, 297.0)
+                        };
+                        let dpi = engine.document.config.format.dpi();
+                        let w_px = (w_mm / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH) * dpi;
+                        let h_px = (h_mm / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH) * dpi;
+                        engine.document.config.format.set_width(w_px);
+                        engine.document.config.format.set_height(h_px);
+                    }
+                    canvas
+                        .load_in_pdf_bytes(
+                            appwindow,
+                            Arc::unwrap_or_clone(pdf_data),
+                            target_pos,
+                            Some(page_range),
+                            password,
+                        )
+                        .await?;
+                }
                 Ok(true)
             } else {
                 Ok(false)

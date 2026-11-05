@@ -24,6 +24,8 @@ pub enum ToolStyle {
     Zoom,
     #[serde(rename = "laser")]
     Laser,
+    #[serde(rename = "snippet")]
+    Snippet,
 }
 
 impl Default for ToolStyle {
