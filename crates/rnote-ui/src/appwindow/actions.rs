@@ -49,6 +49,8 @@ impl RnAppWindow {
         self.add_action(&action_keyboard_shortcuts_dialog);
         let action_open_canvasmenu = gio::SimpleAction::new("open-canvasmenu", None);
         self.add_action(&action_open_canvasmenu);
+        let action_search = gio::SimpleAction::new("search", None);
+        self.add_action(&action_search);
         let action_open_appmenu = gio::SimpleAction::new("open-appmenu", None);
         self.add_action(&action_open_appmenu);
         let action_toggle_overview = gio::SimpleAction::new("toggle-overview", None);
@@ -372,6 +374,19 @@ impl RnAppWindow {
             move |_, _| {
                 let wrapper = appwindow.new_canvas_wrapper();
                 appwindow.append_wrapper_new_tab(&wrapper);
+            }
+        ));
+
+        // Find / Search text
+        action_search.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let search_box = appwindow.overlays().search_box();
+                let search_entry = appwindow.overlays().search_entry();
+                search_box.set_visible(true);
+                search_entry.grab_focus();
+                search_entry.select_region(0, -1);
             }
         ));
 
@@ -1285,6 +1300,7 @@ impl RnAppWindow {
             app.set_accels_for_action("win.import-file", &["<Meta><Shift>i", "<Primary><Shift>i", "<Ctrl><Shift>i"]);
             app.set_accels_for_action("win.undo", &["<Meta>z", "<Primary>z", "<Ctrl>z"]);
             app.set_accels_for_action("win.redo", &["<Meta><Shift>z", "<Primary><Shift>z", "<Ctrl><Shift>z"]);
+            app.set_accels_for_action("win.search", &["<Meta>f", "<Primary>f", "<Ctrl>f"]);
             app.set_accels_for_action("win.clipboard-copy", &["<Meta>c", "<Primary>c", "<Ctrl>c"]);
             app.set_accels_for_action("win.clipboard-cut", &["<Meta>x", "<Primary>x", "<Ctrl>x"]);
             app.set_accels_for_action("win.clipboard-paste", &["<Meta>v", "<Primary>v", "<Ctrl>v"]);
@@ -1346,6 +1362,7 @@ impl RnAppWindow {
             app.set_accels_for_action("win.import-file", &["<Primary><Shift>i", "<Ctrl><Shift>i"]);
             app.set_accels_for_action("win.undo", &["<Primary>z", "<Ctrl>z"]);
             app.set_accels_for_action("win.redo", &["<Primary><Shift>z", "<Ctrl><Shift>z"]);
+            app.set_accels_for_action("win.search", &["<Primary>f", "<Ctrl>f"]);
             app.set_accels_for_action("win.clipboard-copy", &["<Primary>c", "<Ctrl>c"]);
             app.set_accels_for_action("win.clipboard-cut", &["<Primary>x", "<Ctrl>x"]);
             app.set_accels_for_action("win.clipboard-paste", &["<Primary>v", "<Ctrl>v"]);

@@ -31,6 +31,8 @@ pub struct BitmapImage {
     pub image: Image,
     #[serde(rename = "rectangle")]
     pub rectangle: Rectangle,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_runs: Vec<crate::textsearch::TextRun>,
 }
 
 impl Default for BitmapImage {
@@ -38,6 +40,7 @@ impl Default for BitmapImage {
         Self {
             image: Image::default(),
             rectangle: Rectangle::default(),
+            text_runs: Vec::new(),
         }
     }
 }
@@ -123,7 +126,11 @@ impl BitmapImage {
             affine: transform,
         };
 
-        Ok(Self { image, rectangle })
+        Ok(Self {
+            image,
+            rectangle,
+            text_runs: Vec::new(),
+        })
     }
 
     pub fn from_pdf_bytes(
@@ -262,8 +269,13 @@ impl BitmapImage {
                     cuboid: p2d::shape::Cuboid::new(image_size * 0.5),
                     affine: transform,
                 };
+                let text_runs = crate::textsearch::extract_text_from_pdf_page(page);
 
-                Ok(Self { image, rectangle })
+                Ok(Self {
+                    image,
+                    rectangle,
+                    text_runs,
+                })
             })
             .collect()
     }

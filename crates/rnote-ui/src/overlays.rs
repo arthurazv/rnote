@@ -3,6 +3,7 @@ use crate::RnPensSideBar;
 use crate::canvaswrapper::RnCanvasWrapper;
 use crate::{RnAppWindow, RnColorPicker, RnPenPicker, dialogs};
 use core::time::Duration;
+use gettextrs::gettext;
 use gtk4::{
     CompositeTemplate, Overlay, ProgressBar, ScrolledWindow, Widget, gio, glib, glib::clone,
     prelude::*, subclass::prelude::*,
@@ -39,6 +40,18 @@ mod imp {
         pub(crate) sidebar_scroller: TemplateChild<ScrolledWindow>,
         #[template_child]
         pub(crate) penssidebar: TemplateChild<RnPensSideBar>,
+        #[template_child]
+        pub(crate) search_box: TemplateChild<gtk4::Box>,
+        #[template_child]
+        pub(crate) search_entry: TemplateChild<gtk4::SearchEntry>,
+        #[template_child]
+        pub(crate) search_counter: TemplateChild<gtk4::Label>,
+        #[template_child]
+        pub(crate) search_prev_btn: TemplateChild<gtk4::Button>,
+        #[template_child]
+        pub(crate) search_next_btn: TemplateChild<gtk4::Button>,
+        #[template_child]
+        pub(crate) search_close_btn: TemplateChild<gtk4::Button>,
     }
 
     #[glib::object_subclass]
@@ -80,6 +93,8 @@ mod imp {
                 .set_measure_overlay(&*self.penpicker, true);
             self.toolbar_overlay
                 .set_measure_overlay(&*self.sidebar_box, true);
+            self.toolbar_overlay
+                .set_measure_overlay(&*self.search_box, true);
         }
     }
 }
@@ -136,6 +151,34 @@ impl RnOverlays {
         self.imp().penssidebar.get()
     }
 
+    pub(crate) fn search_box(&self) -> gtk4::Box {
+        self.imp().search_box.get()
+    }
+
+    pub(crate) fn search_entry(&self) -> gtk4::SearchEntry {
+        self.imp().search_entry.get()
+    }
+
+    #[allow(unused)]
+    pub(crate) fn search_counter(&self) -> gtk4::Label {
+        self.imp().search_counter.get()
+    }
+
+    #[allow(unused)]
+    pub(crate) fn search_prev_btn(&self) -> gtk4::Button {
+        self.imp().search_prev_btn.get()
+    }
+
+    #[allow(unused)]
+    pub(crate) fn search_next_btn(&self) -> gtk4::Button {
+        self.imp().search_next_btn.get()
+    }
+
+    #[allow(unused)]
+    pub(crate) fn search_close_btn(&self) -> gtk4::Button {
+        self.imp().search_close_btn.get()
+    }
+
     pub(crate) fn init(&self, appwindow: &RnAppWindow) {
         let imp = self.imp();
         imp.colorpicker.get().init(appwindow);
@@ -150,6 +193,7 @@ impl RnOverlays {
 
         self.setup_colorpicker(appwindow);
         self.setup_tabview(appwindow);
+        self.setup_search(appwindow);
     }
 
     fn setup_colorpicker(&self, appwindow: &RnAppWindow) {
@@ -497,5 +541,161 @@ impl RnOverlays {
         self.toast_overlay().add_toast(toast.clone());
         error!("{err}");
         toast
+    }
+
+    fn setup_search(&self, appwindow: &RnAppWindow) {
+        let imp = self.imp();
+        let search_box = imp.search_box.get();
+        let search_entry = imp.search_entry.get();
+        let search_counter = imp.search_counter.get();
+        let search_prev_btn = imp.search_prev_btn.get();
+        let search_next_btn = imp.search_next_btn.get();
+        let search_close_btn = imp.search_close_btn.get();
+
+        let update_counter = clone!(
+            #[weak]
+            search_counter,
+            move |current: usize, total: usize| {
+                if total == 0 {
+                    search_counter.set_text(&gettext("No results"));
+                } else {
+                    search_counter.set_text(&format!("{current} / {total}"));
+                }
+            }
+        );
+
+        // Text changed in search entry
+        search_entry.connect_search_changed(clone!(
+            #[weak]
+            appwindow,
+            #[weak]
+            search_counter,
+            move |entry| {
+                let text = entry.text();
+                let Some(canvas) = appwindow.active_tab_canvas() else {
+                    return;
+                };
+                if text.trim().is_empty() {
+                    canvas.clear_search();
+                    search_counter.set_text("");
+                } else {
+                    let count = canvas.perform_search(text.as_str());
+                    if count == 0 {
+                        search_counter.set_text(&gettext("No results"));
+                    } else {
+                        search_counter.set_text(&format!("1 / {count}"));
+                    }
+                }
+            }
+        ));
+
+        // Next match
+        let trigger_next = clone!(
+            #[weak]
+            appwindow,
+            #[weak]
+            search_entry,
+            #[strong]
+            update_counter,
+            move || {
+                let Some(canvas) = appwindow.active_tab_canvas() else {
+                    return;
+                };
+                if let Some((cur, total)) = canvas.search_next() {
+                    update_counter(cur, total);
+                } else {
+                    let text = search_entry.text();
+                    if !text.trim().is_empty() {
+                        let count = canvas.perform_search(text.as_str());
+                        update_counter(if count > 0 { 1 } else { 0 }, count);
+                    }
+                }
+            }
+        );
+
+        // Previous match
+        let trigger_prev = clone!(
+            #[weak]
+            appwindow,
+            #[strong]
+            update_counter,
+            move || {
+                let Some(canvas) = appwindow.active_tab_canvas() else {
+                    return;
+                };
+                if let Some((cur, total)) = canvas.search_prev() {
+                    update_counter(cur, total);
+                }
+            }
+        );
+
+        // Close search
+        let close_search = clone!(
+            #[weak]
+            search_box,
+            #[weak]
+            search_counter,
+            #[weak]
+            appwindow,
+            move || {
+                search_box.set_visible(false);
+                search_counter.set_text("");
+                if let Some(canvas) = appwindow.active_tab_canvas() {
+                    canvas.clear_search();
+                    canvas.grab_focus();
+                }
+            }
+        );
+
+        search_next_btn.connect_clicked(clone!(
+            #[strong]
+            trigger_next,
+            move |_| {
+                trigger_next();
+            }
+        ));
+
+        search_prev_btn.connect_clicked(clone!(
+            #[strong]
+            trigger_prev,
+            move |_| {
+                trigger_prev();
+            }
+        ));
+
+        search_close_btn.connect_clicked(clone!(
+            #[strong]
+            close_search,
+            move |_| {
+                close_search();
+            }
+        ));
+
+        // Key event controller for Enter, Shift+Enter, and Escape
+        let key_controller = gtk4::EventControllerKey::new();
+        key_controller.connect_key_pressed(clone!(
+            #[strong]
+            trigger_next,
+            #[strong]
+            trigger_prev,
+            #[strong]
+            close_search,
+            move |_, keyval, _, state| {
+                if keyval == gtk4::gdk::Key::Escape {
+                    close_search();
+                    glib::Propagation::Stop
+                } else if keyval == gtk4::gdk::Key::Return || keyval == gtk4::gdk::Key::KP_Enter {
+                    if state.contains(gtk4::gdk::ModifierType::SHIFT_MASK) {
+                        trigger_prev();
+                    } else {
+                        trigger_next();
+                    }
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            }
+        ));
+        search_entry.add_controller(key_controller);
     }
 }

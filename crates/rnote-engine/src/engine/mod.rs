@@ -1035,4 +1035,51 @@ impl Engine {
         self.penholder
             .current_pen_style_w_override(&engine_view!(self))
     }
+
+    /// Searches document text across TextStrokes, VectorImages, and BitmapImages.
+    /// Returns matching snippets and document-space bounding boxes sorted in reading order.
+    pub fn search_text(&self, query: &str) -> Vec<crate::textsearch::SearchMatch> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Vec::new();
+        }
+
+        let mut matches = Vec::new();
+        for key in self.store.stroke_keys_as_rendered() {
+            if let Some(stroke) = self.store.get_stroke_ref(key) {
+                match stroke {
+                    crate::strokes::Stroke::VectorImage(v) => {
+                        matches.extend(crate::textsearch::search_image_runs(
+                            &v.text_runs,
+                            &v.rectangle,
+                            query,
+                        ));
+                    }
+                    crate::strokes::Stroke::BitmapImage(b) => {
+                        matches.extend(crate::textsearch::search_image_runs(
+                            &b.text_runs,
+                            &b.rectangle,
+                            query,
+                        ));
+                    }
+                    crate::strokes::Stroke::TextStroke(t) => {
+                        matches.extend(crate::textsearch::search_text_stroke(t, query));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Sort in reading order (top-to-bottom, left-to-right)
+        matches.sort_by(|a, b| {
+            let y_diff = a.bounds.mins[1] - b.bounds.mins[1];
+            if y_diff.abs() > 10.0 {
+                a.bounds.mins[1].total_cmp(&b.bounds.mins[1])
+            } else {
+                a.bounds.mins[0].total_cmp(&b.bounds.mins[0])
+            }
+        });
+
+        matches
+    }
 }

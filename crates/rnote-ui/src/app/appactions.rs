@@ -120,6 +120,7 @@ impl RnApp {
         edit_menu.append_section(None, &edit_clipboard);
 
         let edit_doc = gio::Menu::new();
+        edit_doc.append(Some("Find…"), Some("win.search"));
         edit_doc.append(Some("Clear Document"), Some("win.clear-doc"));
         edit_menu.append_section(None, &edit_doc);
         menubar.append_submenu(Some("Edit"), &edit_menu);

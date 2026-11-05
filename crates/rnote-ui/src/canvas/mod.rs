@@ -93,6 +93,9 @@ mod imp {
         pub(crate) text_input_enabled: Cell<bool>,
 
         pub(crate) last_export_dir: RefCell<Option<gio::File>>,
+
+        pub(crate) search_matches: RefCell<Vec<rnote_engine::textsearch::SearchMatch>>,
+        pub(crate) search_active_idx: Cell<Option<usize>>,
     }
 
     impl Default for RnCanvas {
@@ -196,6 +199,9 @@ mod imp {
                 text_input_enabled: Cell::new(false),
 
                 last_export_dir: RefCell::new(None),
+
+                search_matches: RefCell::new(Vec::new()),
+                search_active_idx: Cell::new(None),
             }
         }
     }
@@ -496,6 +502,44 @@ mod imp {
                 self.engine
                     .borrow()
                     .draw_to_gtk_snapshot(snapshot, obj.bounds())?;
+
+                // Draw search matches highlights
+                let matches = self.search_matches.borrow();
+                if !matches.is_empty() {
+                    let active_idx = self.search_active_idx.get();
+                    let camera_transform = self.engine.borrow().camera.transform_for_gtk_snapshot();
+                    snapshot.save();
+                    snapshot.transform(Some(&camera_transform));
+
+                    let inactive_color = gtk4::gdk::RGBA::new(1.0, 0.85, 0.0, 0.4);
+                    let active_fill = gtk4::gdk::RGBA::new(1.0, 0.6, 0.0, 0.55);
+                    let active_border = gtk4::gdk::RGBA::new(0.9, 0.4, 0.0, 1.0);
+
+                    for (i, m) in matches.iter().enumerate() {
+                        let is_active = Some(i) == active_idx;
+                        let pad = 2.0;
+                        let rect = graphene::Rect::new(
+                            (m.bounds.mins[0] - pad) as f32,
+                            (m.bounds.mins[1] - pad) as f32,
+                            (m.bounds.extents()[0] + pad * 2.0) as f32,
+                            (m.bounds.extents()[1] + pad * 2.0) as f32,
+                        );
+
+                        if is_active {
+                            snapshot.append_color(&active_fill, &rect);
+                            let rounded_rect = gtk4::gsk::RoundedRect::from_rect(rect, 3.0);
+                            snapshot.append_border(
+                                &rounded_rect,
+                                &[2.0, 2.0, 2.0, 2.0],
+                                &[active_border, active_border, active_border, active_border],
+                            );
+                        } else {
+                            snapshot.append_color(&inactive_color, &rect);
+                        }
+                    }
+
+                    snapshot.restore();
+                }
 
                 // pop the clip
                 snapshot.pop();
@@ -867,6 +911,77 @@ impl RnCanvas {
 
     pub(super) fn emit_invalidate_thumbnail(&self) {
         self.emit_by_name::<()>("invalidate-thumbnail", &[]);
+    }
+
+    pub(crate) fn perform_search(&self, query: &str) -> usize {
+        let matches = self.engine_ref().search_text(query);
+        let count = matches.len();
+        *self.imp().search_matches.borrow_mut() = matches;
+        if count > 0 {
+            self.imp().search_active_idx.set(Some(0));
+            self.scroll_to_active_match();
+        } else {
+            self.imp().search_active_idx.set(None);
+            self.queue_draw();
+        }
+        count
+    }
+
+    pub(crate) fn search_next(&self) -> Option<(usize, usize)> {
+        let matches = self.imp().search_matches.borrow();
+        if matches.is_empty() {
+            return None;
+        }
+        let total = matches.len();
+        let next_idx = match self.imp().search_active_idx.get() {
+            Some(curr) => (curr + 1) % total,
+            None => 0,
+        };
+        self.imp().search_active_idx.set(Some(next_idx));
+        drop(matches);
+        self.scroll_to_active_match();
+        Some((next_idx + 1, total))
+    }
+
+    pub(crate) fn search_prev(&self) -> Option<(usize, usize)> {
+        let matches = self.imp().search_matches.borrow();
+        if matches.is_empty() {
+            return None;
+        }
+        let total = matches.len();
+        let prev_idx = match self.imp().search_active_idx.get() {
+            Some(curr) => {
+                if curr == 0 {
+                    total - 1
+                } else {
+                    curr - 1
+                }
+            }
+            None => 0,
+        };
+        self.imp().search_active_idx.set(Some(prev_idx));
+        drop(matches);
+        self.scroll_to_active_match();
+        Some((prev_idx + 1, total))
+    }
+
+    pub(crate) fn clear_search(&self) {
+        self.imp().search_matches.borrow_mut().clear();
+        self.imp().search_active_idx.set(None);
+        self.queue_draw();
+    }
+
+    fn scroll_to_active_match(&self) {
+        if let Some(idx) = self.imp().search_active_idx.get() {
+            let matches = self.imp().search_matches.borrow();
+            if let Some(m) = matches.get(idx) {
+                let center = m.center;
+                drop(matches);
+                let widget_flags = self.engine_mut().camera.set_viewport_center(center);
+                self.emit_handle_widget_flags(widget_flags);
+                self.queue_draw();
+            }
+        }
     }
 
     pub(crate) fn last_export_dir(&self) -> Option<gio::File> {
