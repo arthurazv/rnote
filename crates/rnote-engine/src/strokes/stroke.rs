@@ -432,7 +432,6 @@ impl Stroke {
             image,
             rectangle,
             text_runs: Vec::new(),
-            pdf_source: None,
         }))
     }
 

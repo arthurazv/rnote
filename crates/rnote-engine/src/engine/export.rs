@@ -323,14 +323,9 @@ impl Engine {
         file_name: String,
     ) -> oneshot::Receiver<anyhow::Result<Vec<u8>>> {
         let (oneshot_sender, oneshot_receiver) = oneshot::channel::<anyhow::Result<Vec<u8>>>();
-        let mut engine_snapshot = self.take_snapshot();
+        let engine_snapshot = self.take_snapshot();
         rayon::spawn(move || {
-            let mut result = || -> anyhow::Result<Vec<u8>> {
-                for stroke in Arc::make_mut(&mut engine_snapshot.stroke_components).values_mut() {
-                    if let crate::strokes::Stroke::BitmapImage(b) = Arc::make_mut(stroke) {
-                        let _ = b.ensure_data();
-                    }
-                }
+            let result = || -> anyhow::Result<Vec<u8>> {
                 let rnote_file = RnoteFile {
                     engine_snapshot: ijson::to_value(&engine_snapshot)?,
                 };

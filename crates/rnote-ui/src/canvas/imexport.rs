@@ -57,6 +57,7 @@ impl RnCanvas {
             .load_in_rnote_bytes(bytes.to_vec(), output_file.path())
             .await?;
         self.emit_handle_widget_flags(widget_flags);
+        self.set_empty(false);
         Ok(())
     }
 
@@ -103,6 +104,7 @@ impl RnCanvas {
             .import_generated_content(vec![(Stroke::VectorImage(vectorimage), None)], false);
 
         self.emit_handle_widget_flags(widget_flags);
+        self.set_empty(false);
         Ok(())
     }
 
@@ -126,6 +128,7 @@ impl RnCanvas {
             .import_generated_content(vec![(Stroke::BitmapImage(bitmapimage), None)], false);
 
         self.emit_handle_widget_flags(widget_flags);
+        self.set_empty(false);
         Ok(())
     }
 
@@ -157,6 +160,7 @@ impl RnCanvas {
             .import_generated_content(strokes, adjust_document);
 
         self.emit_handle_widget_flags(widget_flags);
+        self.set_empty(false);
         Ok(())
     }
 
@@ -173,6 +177,7 @@ impl RnCanvas {
         let widget_flags = self.engine_mut().insert_text(text, Some(pos));
 
         self.emit_handle_widget_flags(widget_flags);
+        self.set_empty(false);
         Ok(())
     }
 
@@ -205,6 +210,7 @@ impl RnCanvas {
             .insert_stroke_content(content, pos, resize_option);
 
         self.emit_handle_widget_flags(widget_flags);
+        self.set_empty(false);
         Ok(())
     }
 
