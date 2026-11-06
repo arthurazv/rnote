@@ -102,6 +102,14 @@ mod imp {
         #[template_child]
         pub(crate) doc_background_color_button: TemplateChild<ColorDialogButton>,
         #[template_child]
+        pub(crate) template_preset_cornell_btn: TemplateChild<Button>,
+        #[template_child]
+        pub(crate) template_preset_ruled_btn: TemplateChild<Button>,
+        #[template_child]
+        pub(crate) template_preset_grid_btn: TemplateChild<Button>,
+        #[template_child]
+        pub(crate) template_preset_blank_btn: TemplateChild<Button>,
+        #[template_child]
         pub(crate) doc_background_patterns_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub(crate) doc_background_pattern_color_button: TemplateChild<ColorDialogButton>,
@@ -1077,6 +1085,39 @@ impl RnSettingsPanel {
                     }
                 }
             ));
+
+        // Quick study notebook presets
+        imp.template_preset_cornell_btn.connect_clicked(clone!(
+            #[weak(rename_to = settingspanel)]
+            self,
+            move |_| {
+                settingspanel.set_background_pattern(PatternStyle::Cornell);
+            }
+        ));
+
+        imp.template_preset_ruled_btn.connect_clicked(clone!(
+            #[weak(rename_to = settingspanel)]
+            self,
+            move |_| {
+                settingspanel.set_background_pattern(PatternStyle::Lines);
+            }
+        ));
+
+        imp.template_preset_grid_btn.connect_clicked(clone!(
+            #[weak(rename_to = settingspanel)]
+            self,
+            move |_| {
+                settingspanel.set_background_pattern(PatternStyle::Grid);
+            }
+        ));
+
+        imp.template_preset_blank_btn.connect_clicked(clone!(
+            #[weak(rename_to = settingspanel)]
+            self,
+            move |_| {
+                settingspanel.set_background_pattern(PatternStyle::None);
+            }
+        ));
 
         imp.doc_background_pattern_color_button
             .connect_rgba_notify(clone!(

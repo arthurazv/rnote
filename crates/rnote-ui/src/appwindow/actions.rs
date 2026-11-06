@@ -59,6 +59,12 @@ impl RnAppWindow {
         self.add_action(&action_devel_menu);
         let action_new_tab = gio::SimpleAction::new("new-tab", None);
         self.add_action(&action_new_tab);
+        let action_new_tab_cornell = gio::SimpleAction::new("new-tab-cornell", None);
+        self.add_action(&action_new_tab_cornell);
+        let action_new_tab_ruled = gio::SimpleAction::new("new-tab-ruled", None);
+        self.add_action(&action_new_tab_ruled);
+        let action_new_tab_grid = gio::SimpleAction::new("new-tab-grid", None);
+        self.add_action(&action_new_tab_grid);
         let action_debug_export_engine_state =
             gio::SimpleAction::new("debug-export-engine-state", None);
         self.add_action(&action_debug_export_engine_state);
@@ -404,6 +410,60 @@ impl RnAppWindow {
             self,
             move |_, _| {
                 let wrapper = appwindow.new_canvas_wrapper();
+                appwindow.append_wrapper_new_tab(&wrapper);
+            }
+        ));
+
+        // Create page with Cornell Notes template
+        action_new_tab_cornell.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let wrapper = appwindow.new_canvas_wrapper();
+                let canvas = wrapper.canvas();
+                {
+                    let mut engine = canvas.engine_mut();
+                    engine.document.config.background.pattern =
+                        rnote_engine::document::background::PatternStyle::Cornell;
+                    engine.document.config.background.pattern_size = Vector2::new(32.0, 30.0);
+                    let _ = engine.background_rendering_regenerate();
+                }
+                appwindow.append_wrapper_new_tab(&wrapper);
+            }
+        ));
+
+        // Create page with College Ruled template
+        action_new_tab_ruled.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let wrapper = appwindow.new_canvas_wrapper();
+                let canvas = wrapper.canvas();
+                {
+                    let mut engine = canvas.engine_mut();
+                    engine.document.config.background.pattern =
+                        rnote_engine::document::background::PatternStyle::Lines;
+                    engine.document.config.background.pattern_size = Vector2::new(32.0, 26.0);
+                    let _ = engine.background_rendering_regenerate();
+                }
+                appwindow.append_wrapper_new_tab(&wrapper);
+            }
+        ));
+
+        // Create page with Grid template
+        action_new_tab_grid.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let wrapper = appwindow.new_canvas_wrapper();
+                let canvas = wrapper.canvas();
+                {
+                    let mut engine = canvas.engine_mut();
+                    engine.document.config.background.pattern =
+                        rnote_engine::document::background::PatternStyle::Grid;
+                    engine.document.config.background.pattern_size = Vector2::new(24.0, 24.0);
+                    let _ = engine.background_rendering_regenerate();
+                }
                 appwindow.append_wrapper_new_tab(&wrapper);
             }
         ));

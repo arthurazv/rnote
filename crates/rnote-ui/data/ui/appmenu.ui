@@ -72,6 +72,21 @@
             <attribute name="label" translatable="yes">_New</attribute>
             <attribute name="action">win.new-tab</attribute>
           </item>
+          <submenu>
+            <attribute name="label" translatable="yes">New from Template...</attribute>
+            <item>
+              <attribute name="label" translatable="yes">Cornell Notes Template</attribute>
+              <attribute name="action">win.new-tab-cornell</attribute>
+            </item>
+            <item>
+              <attribute name="label" translatable="yes">College Ruled (Lines)</attribute>
+              <attribute name="action">win.new-tab-ruled</attribute>
+            </item>
+            <item>
+              <attribute name="label" translatable="yes">Grid / Math Notebook</attribute>
+              <attribute name="action">win.new-tab-grid</attribute>
+            </item>
+          </submenu>
           <item>
             <attribute name="label" translatable="yes">_Open</attribute>
             <attribute name="action">win.open-doc</attribute>

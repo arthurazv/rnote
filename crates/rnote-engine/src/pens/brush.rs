@@ -259,6 +259,9 @@ impl PenBehaviour for Brush {
                     if let Some(shape) = crate::pens::shaperecognizer::recognize_shape(raw_points) {
                         *snapped_shape = Some(shape.clone());
 
+                        #[cfg(feature = "ui")]
+                        trigger_brush_sound(engine_view);
+
                         if let Some(stroke) = engine_view.store.get_stroke_mut(*current_stroke_key) {
                             *stroke = Stroke::ShapeStroke(ShapeStroke::new(shape, preview_style.clone()));
                             widget_flags.store_modified = true;

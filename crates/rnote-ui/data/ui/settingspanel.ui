@@ -362,6 +362,55 @@ gets disabled.</property>
                       </object>
                     </child>
                     <child>
+                      <object class="AdwActionRow" id="doc_template_presets_row">
+                        <property name="title" translatable="yes">Study Templates</property>
+                        <property name="subtitle" translatable="yes">Quick notebook presets</property>
+                        <child type="suffix">
+                          <object class="GtkBox">
+                            <property name="orientation">horizontal</property>
+                            <property name="spacing">4</property>
+                            <property name="valign">center</property>
+                            <child>
+                              <object class="GtkButton" id="template_preset_cornell_btn">
+                                <property name="label" translatable="yes">Cornell</property>
+                                <property name="tooltip-text" translatable="yes">Cornell Notes with cue column and summary</property>
+                                <style>
+                                  <class name="flat" />
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="template_preset_ruled_btn">
+                                <property name="label" translatable="yes">Ruled</property>
+                                <property name="tooltip-text" translatable="yes">College Ruled lined notebook</property>
+                                <style>
+                                  <class name="flat" />
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="template_preset_grid_btn">
+                                <property name="label" translatable="yes">Grid</property>
+                                <property name="tooltip-text" translatable="yes">Math and engineering grid notebook</property>
+                                <style>
+                                  <class name="flat" />
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="template_preset_blank_btn">
+                                <property name="label" translatable="yes">Blank</property>
+                                <property name="tooltip-text" translatable="yes">Blank unlined notebook</property>
+                                <style>
+                                  <class name="flat" />
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
                       <object class="AdwComboRow" id="doc_background_patterns_row">
                         <property name="title" translatable="yes">Pattern</property>
                         <property name="subtitle" translatable="yes">Choose a background pattern</property>

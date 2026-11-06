@@ -503,6 +503,18 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
         .unwrap_or_else(|| gettext("- no modification date -"));
     let n_pages = pdf.pages().len();
 
+    // For multi-page PDFs / books (>= 8 pages), default to virtualized bitmap rendering to keep memory light and avoid lag
+    if n_pages >= 8 {
+        pdf_import_as_bitmap_toggle.set_active(true);
+        pdf_import_bitmap_scalefactor_row.set_sensitive(true);
+        appwindow
+            .engine_config()
+            .write()
+            .import_prefs
+            .pdf_import_prefs
+            .pages_type = PdfImportPagesType::Bitmap;
+    }
+
     // pdf info
     pdf_info_label.set_label(
             &format!("<b>{}  </b>{file_name}\n<b>{}  </b>{title}\n<b>{}  </b>{author}\n<b>{}  </b>{mod_date}\n<b>{}  </b>{n_pages}\n",
