@@ -1056,10 +1056,25 @@ impl RnAppWindow {
                         .set_visible_child_name("eraser_page");
                 }
                 PenStyle::Selector => {
-                    self.overlays()
-                        .penpicker()
-                        .selector_toggle()
-                        .set_active(true);
+                    let selector_style = self
+                        .engine_config()
+                        .read()
+                        .pens_config
+                        .selector_config
+                        .style;
+                    if selector_style
+                        == rnote_engine::pens::pensconfig::selectorconfig::SelectorStyle::Text
+                    {
+                        self.overlays()
+                            .penpicker()
+                            .text_selector_toggle()
+                            .set_active(true);
+                    } else {
+                        self.overlays()
+                            .penpicker()
+                            .selector_toggle()
+                            .set_active(true);
+                    }
                     self.overlays()
                         .penssidebar()
                         .sidebar_stack()

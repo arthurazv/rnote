@@ -25,6 +25,8 @@ mod imp {
         #[template_child]
         pub(crate) typewriter_toggle: TemplateChild<ToggleButton>,
         #[template_child]
+        pub(crate) text_selector_toggle: TemplateChild<ToggleButton>,
+        #[template_child]
         pub(crate) eraser_toggle: TemplateChild<ToggleButton>,
         #[template_child]
         pub(crate) selector_toggle: TemplateChild<ToggleButton>,
@@ -94,6 +96,10 @@ impl RnPenPicker {
 
     pub(crate) fn typewriter_toggle(&self) -> ToggleButton {
         self.imp().typewriter_toggle.get()
+    }
+
+    pub(crate) fn text_selector_toggle(&self) -> ToggleButton {
+        self.imp().text_selector_toggle.get()
     }
 
     pub(crate) fn eraser_toggle(&self) -> ToggleButton {
@@ -199,6 +205,23 @@ impl RnPenPicker {
             }
         ));
 
+        imp.text_selector_toggle.connect_toggled(clone!(
+            #[weak]
+            appwindow,
+            move |text_selector_toggle| {
+                if text_selector_toggle.is_active() {
+                    appwindow
+                        .engine_config()
+                        .write()
+                        .pens_config
+                        .selector_config
+                        .style = rnote_engine::pens::pensconfig::selectorconfig::SelectorStyle::Text;
+                    appwindow.set_pen_style_with_lock(PenStyle::Selector);
+                    appwindow.refresh_ui();
+                }
+            }
+        ));
+
         imp.eraser_toggle.get().connect_toggled(clone!(
             #[weak]
             appwindow,
@@ -214,7 +237,23 @@ impl RnPenPicker {
             appwindow,
             move |selector_toggle| {
                 if selector_toggle.is_active() {
+                    if appwindow
+                        .engine_config()
+                        .read()
+                        .pens_config
+                        .selector_config
+                        .style
+                        == rnote_engine::pens::pensconfig::selectorconfig::SelectorStyle::Text
+                    {
+                        appwindow
+                            .engine_config()
+                            .write()
+                            .pens_config
+                            .selector_config
+                            .style = rnote_engine::pens::pensconfig::selectorconfig::SelectorStyle::Rectangle;
+                    }
                     appwindow.set_pen_style_with_lock(PenStyle::Selector);
+                    appwindow.refresh_ui();
                 }
             }
         ));

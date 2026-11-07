@@ -28,7 +28,7 @@ impl Selector {
         self.pos = Some(element.pos);
 
         let event_result = match &mut self.state {
-            SelectorState::Idle => {
+            SelectorState::Idle | SelectorState::TextSelected { .. } => {
                 // Deselect on start
                 let selection_keys = engine_view.store.selection_keys_as_rendered();
                 if !selection_keys.is_empty() {
@@ -416,15 +416,60 @@ impl Selector {
         self.pos = Some(element.pos);
 
         let event_result = match &mut self.state {
-            SelectorState::Idle => EventResult {
+            SelectorState::Idle | SelectorState::TextSelected { .. } => EventResult {
                 handled: false,
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,
             },
             SelectorState::Selecting { path } => {
                 let mut progress = PenProgress::Finished;
+                Self::add_to_select_path(
+                    engine_view.config.pens_config.selector_config.style,
+                    path,
+                    element,
+                );
+
+                if engine_view.config.pens_config.selector_config.style == SelectorStyle::Text {
+                    if let (Some(first), Some(last)) = (path.first(), path.last()) {
+                        let aabb = Aabb::new_positive(first.pos, last.pos);
+                        let words = engine_view.store.extract_text_in_bounds(aabb);
+                        if !words.is_empty() {
+                            let text = words.join(" ");
+                            let count = words.len();
+                            let preview: String = text.chars().take(35).collect();
+                            self.state = SelectorState::TextSelected {
+                                bounds: aabb,
+                                text: text.clone(),
+                            };
+                            widget_flags.clipboard_content = Some(vec![
+                                (text.into_bytes(), "text/plain".to_string()),
+                            ]);
+                            widget_flags.clipboard_toast = Some(format!(
+                                "Texto copiado ({count} palavras): \"{preview}...\"! Cole com ⌘V"
+                            ));
+                            progress = PenProgress::Finished;
+                        } else {
+                            self.state = SelectorState::Idle;
+                            widget_flags.clipboard_toast = Some(String::from("Nenhum texto encontrado na seleção"));
+                            progress = PenProgress::Finished;
+                        }
+                    } else {
+                        self.state = SelectorState::Idle;
+                    }
+                    widget_flags |= self.update_state(engine_view);
+
+                    return (
+                        EventResult {
+                            handled: true,
+                            propagate: EventPropagation::Stop,
+                            progress,
+                        },
+                        widget_flags,
+                    );
+                }
 
                 let new_selection = match engine_view.config.pens_config.selector_config.style {
+                    SelectorStyle::Text => vec![],
                     SelectorStyle::Polygon => {
                         if path.len() >= 3 {
                             engine_view
@@ -604,7 +649,7 @@ impl Selector {
         self.pos = Some(element.pos);
 
         let event_result = match &mut self.state {
-            SelectorState::Idle => EventResult {
+            SelectorState::Idle | SelectorState::TextSelected { .. } => EventResult {
                 handled: false,
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,
@@ -655,6 +700,22 @@ impl Selector {
                             propagate: EventPropagation::Proceed,
                             progress: PenProgress::InProgress,
                         }
+                    }
+                }
+                _ => EventResult {
+                    handled: false,
+                    propagate: EventPropagation::Proceed,
+                    progress: PenProgress::InProgress,
+                },
+            },
+            SelectorState::TextSelected { .. } => match keyboard_key {
+                KeyboardKey::Escape => {
+                    self.state = SelectorState::Idle;
+                    widget_flags.redraw = true;
+                    EventResult {
+                        handled: true,
+                        propagate: EventPropagation::Stop,
+                        progress: PenProgress::Finished,
                     }
                 }
                 _ => EventResult {
@@ -778,7 +839,7 @@ impl Selector {
         self.pos = None;
 
         let event_result = match &mut self.state {
-            SelectorState::Idle => EventResult {
+            SelectorState::Idle | SelectorState::TextSelected { .. } => EventResult {
                 handled: false,
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,
@@ -807,7 +868,7 @@ impl Selector {
         self.pos = None;
 
         let event_result = match &mut self.state {
-            SelectorState::Idle => EventResult {
+            SelectorState::Idle | SelectorState::TextSelected { .. } => EventResult {
                 handled: false,
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,

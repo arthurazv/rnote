@@ -10,7 +10,7 @@
     <child>
       <object class="GtkBox" id="toolbox">
         <property name="spacing">6</property>
-        <property name="width-request">400</property>
+        <property name="width-request">450</property>
         <property name="homogeneous">true</property>
         <child>
           <object class="GtkToggleButton" id="brush_toggle">
@@ -48,6 +48,17 @@
           <object class="GtkToggleButton" id="typewriter_toggle">
             <property name="icon_name">pen-typewriter-symbolic</property>
             <property name="tooltip_text" translatable="yes">Typewriter</property>
+            <property name="hexpand">true</property>
+            <property name="group">brush_toggle</property>
+            <style>
+              <class name="flat" />
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkToggleButton" id="text_selector_toggle">
+            <property name="icon_name">pen-text-select-symbolic</property>
+            <property name="tooltip_text" translatable="yes">Selecionar Texto (PDF / Documento)</property>
             <property name="hexpand">true</property>
             <property name="group">brush_toggle</property>
             <style>

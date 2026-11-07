@@ -363,4 +363,72 @@ mod tests {
             assert_eq!(engine.store.stroke_layer(key), Some(crate::store::chrono_comp::StrokeLayer::Document));
         }
     }
+
+    #[test]
+    fn test_dedicated_text_selector_tool_workflow() {
+        use crate::pens::PenStyle;
+        use crate::pens::pensconfig::selectorconfig::SelectorStyle;
+        use rnote_compose::penpath::Element;
+        use rnote_compose::penevent::PenEvent;
+
+        let pdf_bytes = build_sample_multipage_pdf(&["Dedicated Text Selection Workflow"]);
+        let mut prefs = PdfImportPrefs::default();
+        prefs.pages_type = PdfImportPagesType::Bitmap;
+        prefs.adjust_document = true;
+
+        let format = Format::default();
+        let strokes = BitmapImage::from_pdf_bytes(
+            &pdf_bytes,
+            prefs,
+            Vector2::ZERO,
+            None,
+            &format,
+            None,
+        ).expect("PDF import should succeed");
+
+        let mut engine = Engine::default();
+        for s in strokes {
+            engine.store.insert_stroke(Stroke::BitmapImage(s), Some(crate::store::chrono_comp::StrokeLayer::Document));
+        }
+
+        // Configure engine with SelectorStyle::Text
+        engine.config.write().pens_config.selector_config.style = SelectorStyle::Text;
+        let _ = engine.change_pen_style(PenStyle::Selector);
+
+        // Get bounds of the page
+        let all_bounds = engine.store.bounds_for_strokes(&engine.store.stroke_keys_as_rendered()).unwrap();
+
+        // Simulate pen down and pen up across the text
+        let now = Instant::now();
+        let p_start = Element::new(all_bounds.mins, 0.5);
+        let p_end = Element::new(all_bounds.maxs, 0.5);
+
+        let (_, _) = engine.handle_pen_event(
+            PenEvent::Down { element: p_start, modifier_keys: HashSet::new() },
+            None,
+            now,
+        );
+        let (_, flags) = engine.handle_pen_event(
+            PenEvent::Up { element: p_end, modifier_keys: HashSet::new() },
+            None,
+            now + Duration::from_millis(50),
+        );
+
+        // Verify clipboard content in widget flags contains text/plain ONLY!
+        let clip = flags.clipboard_content.expect("Should have set clipboard_content");
+        assert_eq!(clip.len(), 1, "Should contain exactly one clipboard format");
+        assert_eq!(clip[0].1, "text/plain", "MIME type must be text/plain");
+        let text_str = String::from_utf8(clip[0].0.clone()).unwrap();
+        assert!(text_str.contains("Dedicated"), "Should contain 'Dedicated'");
+        assert!(text_str.contains("Workflow"), "Should contain 'Workflow'");
+
+        // Verify that fetch_clipboard_content on selector returns ONLY text/plain, no image/png or SVG!
+        let receiver = engine.fetch_clipboard_content();
+        let (content, _) = futures::executor::block_on(receiver).unwrap().unwrap();
+        assert_eq!(content.len(), 1, "Clipboard content must contain ONLY text/plain");
+        assert_eq!(content[0].1, "text/plain", "MIME type must strictly be text/plain");
+
+        // Verify no strokes were selected for movement/transformation
+        assert!(engine.store.selection_keys_as_rendered().is_empty(), "No strokes should be selected for modification");
+    }
 }
