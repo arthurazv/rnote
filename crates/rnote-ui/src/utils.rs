@@ -25,6 +25,25 @@ where
     blocking::unblock(move || rnote_engine::utils::atomic_save_to_file(filepath, bytes)).await
 }
 
+/// Loads the content of a `gio::File` into bytes asynchronously.
+/// When the file points to a local filesystem path, this uses `std::fs::read` on a worker thread
+/// to avoid GIO/GVfs daemon timeouts, D-Bus portal delays, or sandbox permission blocks.
+pub(crate) async fn load_file_bytes_future(file: &gio::File) -> anyhow::Result<Vec<u8>> {
+    if let Some(path) = file.path() {
+        let path_clone = path.clone();
+        match blocking::unblock(move || std::fs::read(&path_clone)).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => {
+                tracing::warn!(
+                    "Direct filesystem read for '{path:?}' failed ({e}), falling back to GIO."
+                );
+            }
+        }
+    }
+    let (bytes, _) = file.load_bytes_future().await?;
+    Ok(bytes.to_vec())
+}
+
 /// Create a new file or replace if it already exists, asynchronously.
 pub(crate) async fn create_replace_file_future(
     bytes: Vec<u8>,

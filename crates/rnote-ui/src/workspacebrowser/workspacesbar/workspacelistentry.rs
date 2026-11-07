@@ -29,15 +29,14 @@ mod imp {
         fn default() -> Self {
             #[cfg(target_os = "macos")]
             {
-                let icloud_rnote = glib::home_dir()
-                    .join("Library/Mobile Documents/com~apple~CloudDocs/Rnote");
-                let _ = std::fs::create_dir_all(&icloud_rnote);
-                if icloud_rnote.exists() {
+                if let Some(doc_dir) = glib::user_special_dir(glib::UserDirectory::Documents) {
+                    let rnote_dir = doc_dir.join("Rnote");
+                    let _ = std::fs::create_dir_all(&rnote_dir);
                     return Self {
-                        dir: icloud_rnote,
+                        dir: rnote_dir,
                         icon: String::from("workspacelistentryicon-folder-symbolic"),
                         color: super::RnWorkspaceListEntry::COLOR_DEFAULT.as_rgba_u32(),
-                        name: String::from("iCloud Rnote"),
+                        name: String::from("Rnote"),
                     };
                 }
             }

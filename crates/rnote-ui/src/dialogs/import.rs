@@ -48,19 +48,6 @@ fn build_all_supported_filter() -> FileFilter {
 }
 
 pub(crate) fn default_initial_folder(appwindow: &RnAppWindow) -> gio::File {
-    #[cfg(target_os = "macos")]
-    {
-        let icloud_base = glib::home_dir().join("Library/Mobile Documents/com~apple~CloudDocs");
-        let icloud_rnote = icloud_base.join("Rnote");
-        let _ = std::fs::create_dir_all(&icloud_rnote);
-        if icloud_rnote.exists() {
-            return gio::File::for_path(icloud_rnote);
-        }
-        if icloud_base.exists() {
-            return gio::File::for_path(icloud_base);
-        }
-    }
-
     if let Some(dir) = appwindow.sidebar().workspacebrowser().dir_list_dir() {
         if dir != std::path::Path::new("/")
             && dir != std::path::Path::new(".")
@@ -138,6 +125,10 @@ pub(crate) async fn filedialog_open_doc_in_target(appwindow: &RnAppWindow, new_w
             }
         }
         Err(e) => {
+            if !e.matches(gtk4::DialogError::Dismissed) {
+                let err_msg = format!("{}: {e}", gettext("Opening file failed"));
+                appwindow.overlays().dispatch_toast_error(&err_msg);
+            }
             debug!("Did not open document (Error or dialog dismissed by user), Err: {e:?}");
         }
     }
@@ -203,6 +194,10 @@ pub(crate) async fn filedialog_import_file(appwindow: &RnAppWindow) {
                 .await;
         }
         Err(e) => {
+            if !e.matches(gtk4::DialogError::Dismissed) {
+                let err_msg = format!("{}: {e}", gettext("Importing file failed"));
+                appwindow.overlays().dispatch_toast_error(&err_msg);
+            }
             debug!("Did not import file (Error or dialog dismissed by user), Err: {e:?}");
         }
     }
@@ -336,7 +331,7 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     input_file: gio::File,
     target_pos: Option<Vector2>,
 ) -> anyhow::Result<bool> {
-    let pdf_data = Arc::new(input_file.load_bytes_future().await?.0.to_vec());
+    let pdf_data = Arc::new(crate::utils::load_file_bytes_future(&input_file).await?);
     let (pdf, password, cancel) =
         pdf_encryption_check_and_dialog(appwindow, &input_file, pdf_data.clone()).await;
     if cancel {
@@ -1075,11 +1070,11 @@ pub(crate) async fn dialog_import_xopp_w_prefs(
             }
             if confirm {
                 appwindow.overlays().progressbar_start_pulsing();
-                let (bytes, _) = input_file.load_bytes_future().await?;
+                let bytes = crate::utils::load_file_bytes_future(&input_file).await?;
                 appwindow.append_wrapper_new_tab(wrapper);
                 wrapper
                     .canvas()
-                    .load_in_xopp_bytes(appwindow, bytes.to_vec())
+                    .load_in_xopp_bytes(appwindow, bytes)
                     .await?;
                 Ok(true)
             } else {

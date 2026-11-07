@@ -52,9 +52,9 @@ impl RnCanvas {
                 "Failed to reload file from disk, no file path saved."
             ));
         };
-        let (bytes, _) = output_file.load_bytes_future().await?;
+        let bytes = crate::utils::load_file_bytes_future(&output_file).await?;
         let widget_flags = self
-            .load_in_rnote_bytes(bytes.to_vec(), output_file.path())
+            .load_in_rnote_bytes(bytes, output_file.path())
             .await?;
         self.emit_handle_widget_flags(widget_flags);
         self.set_empty(false);

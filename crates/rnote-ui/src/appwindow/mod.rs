@@ -722,10 +722,10 @@ impl RnAppWindow {
                             (false, Some(active_wrapper)) => (false, active_wrapper),
                         };
 
-                    let (bytes, _) = input_file.load_bytes_future().await?;
+                    let bytes = crate::utils::load_file_bytes_future(&input_file).await?;
                     let widget_flags = wrapper
                         .canvas()
-                        .load_in_rnote_bytes(bytes.to_vec(), input_file.path())
+                        .load_in_rnote_bytes(bytes, input_file.path())
                         .await?;
                     if rnote_file_new_tab {
                         self.append_wrapper_new_tab(&wrapper);
@@ -740,13 +740,13 @@ impl RnAppWindow {
                     Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
                     _ => (self.new_canvas_wrapper(), true),
                 };
-                let (bytes, _) = input_file.load_bytes_future().await?;
+                let bytes = crate::utils::load_file_bytes_future(&input_file).await?;
                 if is_new {
                     self.append_wrapper_new_tab(&wrapper);
                 }
                 let canvas = wrapper.canvas();
                 canvas
-                    .load_in_vectorimage_bytes(bytes.to_vec(), target_pos, self.respect_borders())
+                    .load_in_vectorimage_bytes(bytes, target_pos, self.respect_borders())
                     .await?;
                 canvas.set_unsaved_changes(true);
                 true
@@ -756,13 +756,13 @@ impl RnAppWindow {
                     Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
                     _ => (self.new_canvas_wrapper(), true),
                 };
-                let (bytes, _) = input_file.load_bytes_future().await?;
+                let bytes = crate::utils::load_file_bytes_future(&input_file).await?;
                 if is_new {
                     self.append_wrapper_new_tab(&wrapper);
                 }
                 let canvas = wrapper.canvas();
                 canvas
-                    .load_in_bitmapimage_bytes(bytes.to_vec(), target_pos, self.respect_borders())
+                    .load_in_bitmapimage_bytes(bytes, target_pos, self.respect_borders())
                     .await?;
                 canvas.set_unsaved_changes(true);
                 true
@@ -792,8 +792,8 @@ impl RnAppWindow {
                     Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
                     _ => (self.new_canvas_wrapper(), true),
                 };
-                let (bytes, _) = input_file.load_bytes_future().await?;
-                let text = String::from_utf8(bytes.to_vec())?;
+                let bytes = crate::utils::load_file_bytes_future(&input_file).await?;
+                let text = String::from_utf8(bytes)?;
                 if is_new {
                     self.append_wrapper_new_tab(&wrapper);
                 }

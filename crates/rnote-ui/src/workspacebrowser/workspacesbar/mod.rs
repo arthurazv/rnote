@@ -284,10 +284,11 @@ impl RnWorkspacesBar {
 
         #[cfg(target_os = "macos")]
         {
-            let icloud_base = glib::home_dir().join("Library/Mobile Documents/com~apple~CloudDocs");
-            let icloud_dir = icloud_base.join("Rnote");
-            let _ = std::fs::create_dir_all(&icloud_dir);
-            let icloud_dir_str = icloud_dir.to_string_lossy().to_string();
+            let docs_rnote = glib::user_special_dir(glib::UserDirectory::Documents)
+                .map(|d| d.join("Rnote"))
+                .unwrap_or_else(|| glib::home_dir().join("Documents/Rnote"));
+            let _ = std::fs::create_dir_all(&docs_rnote);
+            let docs_rnote_str = docs_rnote.to_string_lossy().to_string();
 
             // On macOS, never let a workspace point to root "/" or "./"
             for entry in &workspace_list.iter() {
@@ -296,30 +297,9 @@ impl RnWorkspacesBar {
                     || d == std::path::Path::new("./")
                     || d == std::path::Path::new(".")
                 {
-                    if icloud_dir.exists() {
-                        entry.set_dir(icloud_dir_str.clone());
-                        entry.set_name(String::from("iCloud Drive"));
-                    } else if let Some(docs) = glib::user_special_dir(glib::UserDirectory::Documents) {
-                        let docs_rnote = docs.join("Rnote");
-                        let _ = std::fs::create_dir_all(&docs_rnote);
-                        entry.set_dir(docs_rnote.to_string_lossy().to_string());
-                        entry.set_name(String::from("Rnote"));
-                    }
+                    entry.set_dir(docs_rnote_str.clone());
+                    entry.set_name(String::from("Rnote"));
                 }
-            }
-
-            let has_icloud = workspace_list
-                .to_vec()
-                .iter()
-                .any(|entry| entry.dir() == icloud_dir_str || entry.name() == "iCloud Drive");
-            if !has_icloud && icloud_dir.exists() {
-                let icloud_entry = glib::Object::builder::<RnWorkspaceListEntry>()
-                    .property("dir", icloud_dir_str)
-                    .property("icon", "workspacelistentryicon-folder-symbolic")
-                    .property("color", gdk::RGBA::new(0.0, 0.48, 1.0, 1.0))
-                    .property("name", "iCloud Drive")
-                    .build();
-                workspace_list.push(icloud_entry);
             }
         }
 
