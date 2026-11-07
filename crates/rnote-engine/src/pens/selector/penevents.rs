@@ -6,7 +6,7 @@ use crate::pens::PenBehaviour;
 use crate::pens::pensconfig::selectorconfig::SelectorStyle;
 use crate::snap::SnapCorner;
 use crate::store::StrokeKey;
-use p2d::bounding_volume::Aabb;
+use p2d::bounding_volume::{Aabb, BoundingVolume};
 use p2d::math::Vector2;
 use p2d::query::PointQuery;
 use rnote_compose::eventresult::{EventPropagation, EventResult};
@@ -432,13 +432,21 @@ impl Selector {
                 if engine_view.config.pens_config.selector_config.style == SelectorStyle::Text {
                     if let (Some(first), Some(last)) = (path.first(), path.last()) {
                         let aabb = Aabb::new_positive(first.pos, last.pos);
-                        let words = engine_view.store.extract_text_in_bounds(aabb);
-                        if !words.is_empty() {
-                            let text = words.join(" ");
-                            let count = words.len();
+                        let runs = engine_view.store.extract_text_runs_in_bounds(aabb);
+                        if !runs.is_empty() {
+                            let text = runs.iter().map(|(w, _)| w.as_str()).collect::<Vec<_>>().join(" ");
+                            let word_boxes: Vec<Aabb> = runs.into_iter().map(|(_, b)| b).collect();
+                            let count = word_boxes.len();
                             let preview: String = text.chars().take(35).collect();
+
+                            let mut combined_bounds = aabb;
+                            for b in &word_boxes {
+                                combined_bounds.merge(b);
+                            }
+
                             self.state = SelectorState::TextSelected {
-                                bounds: aabb,
+                                bounds: combined_bounds,
+                                word_boxes,
                                 text: text.clone(),
                             };
                             widget_flags.clipboard_content = Some(vec![

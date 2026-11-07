@@ -69,6 +69,7 @@ pub(super) enum SelectorState {
     },
     TextSelected {
         bounds: Aabb,
+        word_boxes: Vec<Aabb>,
         text: String,
     },
     ModifySelection {
@@ -327,7 +328,7 @@ impl DrawableOnDoc for Selector {
 
         match &self.state {
             SelectorState::Idle => None,
-            SelectorState::TextSelected { bounds, .. } => Some(bounds.loosened(2.0 / total_zoom)),
+            SelectorState::TextSelected { bounds, .. } => Some(bounds.loosened(10.0 / total_zoom)),
             SelectorState::Selecting { path } => {
                 // Making sure bounds are always outside of coord + width
                 let mut path_iter = path.iter();
@@ -366,14 +367,23 @@ impl DrawableOnDoc for Selector {
 
         match &self.state {
             SelectorState::Idle => {}
-            SelectorState::TextSelected { bounds, .. } => {
-                let select_rect = bounds.to_kurbo_rect();
-                cx.fill(select_rect, &piet::Color::rgba8(53, 132, 228, 80));
-                cx.stroke(
-                    select_rect,
-                    &piet::Color::rgba8(53, 132, 228, 220),
-                    1.5 / total_zoom,
-                );
+            SelectorState::TextSelected {
+                bounds, word_boxes, ..
+            } => {
+                let fill_color = piet::Color::rgba8(53, 132, 228, 95);
+                let border_color = piet::Color::rgba8(53, 132, 228, 180);
+
+                if !word_boxes.is_empty() {
+                    for wb in word_boxes {
+                        let rect = wb.loosened(1.5 / total_zoom).to_kurbo_rect();
+                        cx.fill(rect, &fill_color);
+                        cx.stroke(rect, &border_color, 1.0 / total_zoom);
+                    }
+                } else {
+                    let select_rect = bounds.to_kurbo_rect();
+                    cx.fill(select_rect, &fill_color);
+                    cx.stroke(select_rect, &border_color, 1.0 / total_zoom);
+                }
             }
             SelectorState::Selecting { path } => {
                 match engine_view.config.pens_config.selector_config.style {

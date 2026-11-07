@@ -791,8 +791,8 @@ impl StrokeStore {
         self.chrono_components.get(key).map(|c| c.layer)
     }
 
-    /// Extracts all text snippets in natural reading order inside the given bounding box.
-    pub fn extract_text_in_bounds(&self, bounds: Aabb) -> Vec<String> {
+    /// Extracts all text snippets with their bounding boxes in natural reading order inside the given bounding box.
+    pub fn extract_text_runs_in_bounds(&self, bounds: Aabb) -> Vec<(String, Aabb)> {
         let keys = self.keys_sorted_chrono_intersecting_bounds(bounds);
         let mut words_with_pos: Vec<(String, Aabb)> = Vec::new();
 
@@ -842,6 +842,14 @@ impl StrokeStore {
             }
         });
 
-        words_with_pos.into_iter().map(|(w, _)| w).collect()
+        words_with_pos
+    }
+
+    /// Extracts all text snippets in natural reading order inside the given bounding box.
+    pub fn extract_text_in_bounds(&self, bounds: Aabb) -> Vec<String> {
+        self.extract_text_runs_in_bounds(bounds)
+            .into_iter()
+            .map(|(w, _)| w)
+            .collect()
     }
 }

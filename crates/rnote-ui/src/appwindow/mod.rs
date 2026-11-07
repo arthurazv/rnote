@@ -407,6 +407,8 @@ impl RnAppWindow {
                     .unwrap_or_else(|| gettext("Snippet copied to clipboard! Paste with ⌘V"));
                 self.overlays().dispatch_toast_text(&toast_text, Some(std::time::Duration::from_secs(2)));
             }
+        } else if let Some(ref toast_text) = widget_flags.clipboard_toast {
+            self.overlays().dispatch_toast_text(toast_text, Some(std::time::Duration::from_secs(2)));
         }
 
         // Keep the pages navigator in sync with the active canvas.
