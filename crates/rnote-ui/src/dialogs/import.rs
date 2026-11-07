@@ -569,14 +569,18 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     let n_pages = pdf.pages().len();
 
     // pdf info
+    let escaped_file_name = glib::markup_escape_text(&file_name);
+    let escaped_title = glib::markup_escape_text(&title);
+    let escaped_author = glib::markup_escape_text(&author);
+    let escaped_mod_date = glib::markup_escape_text(&mod_date);
     pdf_info_label.set_label(
-            &format!("<b>{}  </b>{file_name}\n<b>{}  </b>{title}\n<b>{}  </b>{author}\n<b>{}  </b>{mod_date}\n<b>{}  </b>{n_pages}\n",
-                gettext("File name:"),
-                gettext("Title:"),
-                gettext("Author:"),
-                gettext("Modification date:"),
-                gettext("Pages:"))
-        );
+        &format!("<b>{}  </b>{escaped_file_name}\n<b>{}  </b>{escaped_title}\n<b>{}  </b>{escaped_author}\n<b>{}  </b>{escaped_mod_date}\n<b>{}  </b>{n_pages}\n",
+            gettext("File name:"),
+            gettext("Title:"),
+            gettext("Author:"),
+            gettext("Modification date:"),
+            gettext("Pages:"))
+    );
 
     // Listen to responses
 
@@ -732,6 +736,8 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                             target_appwindow.handle_widget_flags(flags, &target_canvas);
                         }
 
+                        target_canvas.set_unsaved_changes(true);
+
                         if let Some(tp) = target_appwindow.active_tab_page() {
                             tp.set_title(&file_name);
                         }
@@ -844,13 +850,17 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                                 appwindow.handle_widget_flags(flags, &page_canvas);
                             }
 
+                            page_canvas.set_unsaved_changes(true);
                             tab_page.set_title(&format!("{file_name} - {}", page_idx + 1));
                         }
                     } else {
                         // destination 0 (New Tab) or 1 (Current Document)
                         let (target_canvas, tab_page_opt) = if destination == 1 {
-                            // Current Document: load into existing canvas directly
-                            (canvas.clone(), None)
+                            // Current Document: load into existing active canvas directly
+                            let current_canvas = appwindow
+                                .active_tab_canvas()
+                                .unwrap_or_else(|| canvas.clone());
+                            (current_canvas, None)
                         } else {
                             // New Tab: reuse pending_new_wrapper or create a new wrapper tab
                             if let Some(wrapper) = pending_new_wrapper {
@@ -952,6 +962,8 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                                     .change_pen_style(rnote_engine::pens::PenStyle::Brush);
                             appwindow.handle_widget_flags(flags, &target_canvas);
                         }
+
+                        target_canvas.set_unsaved_changes(true);
 
                         if let Some(tp) = tab_page_opt {
                             tp.set_title(&file_name);

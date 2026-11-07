@@ -677,8 +677,8 @@ impl RnAppWindow {
             Err(e) => {
                 error!("Opening file with dialogs failed, Err: {e:?}");
 
-                self.overlays()
-                    .dispatch_toast_error(&gettext("Opening file failed"));
+                let err_msg = format!("{}: {e}", gettext("Opening file failed"));
+                self.overlays().dispatch_toast_error(&err_msg);
                 self.overlays().progressbar_abort();
             }
         }
