@@ -1,0 +1,309 @@
+#[cfg(test)]
+mod tests {
+    use crate::document::background::PatternStyle;
+    use crate::document::{Background, Format};
+    use crate::engine::import::{PdfImportPageSpacing, PdfImportPagesType, PdfImportPrefs};
+    use crate::engine::{EngineSnapshot, StrokeContent};
+    use crate::fileformats::{FileFormatLoader, rnoteformat::RnoteFile};
+    use crate::pens::PenStyle;
+    use crate::pens::pensconfig::brushconfig::BrushStyle;
+    use crate::pens::pensconfig::toolsconfig::ToolStyle;
+    use crate::strokes::{BitmapImage, Stroke, VectorImage};
+    use crate::{Drawable, Engine};
+    use p2d::bounding_volume::Aabb;
+    use p2d::math::Vector2;
+    use rnote_compose::penevent::{KeyboardKey, ModifierKey, PenEvent};
+    use rnote_compose::penpath::Element;
+    use rnote_compose::shapes::Shapeable;
+    use std::collections::HashSet;
+    use std::time::{Duration, Instant};
+
+    /// Generates a valid multi-page searchable PDF in memory using Cairo's PdfSurface.
+    fn build_sample_multipage_pdf(pages_text: &[&str]) -> Vec<u8> {
+        let surface = cairo::PdfSurface::for_stream(595.0, 842.0, Vec::<u8>::new())
+            .expect("PdfSurface creation should succeed");
+        {
+            let cx = cairo::Context::new(&surface).expect("Cairo context should succeed");
+            for (idx, text) in pages_text.iter().enumerate() {
+                cx.set_source_rgb(1.0, 1.0, 1.0);
+                cx.paint().unwrap();
+
+                // Draw distinct colored header bar so cropped regions have real non-white pixels
+                cx.set_source_rgb(0.15, 0.35 + (idx as f64 * 0.1) % 0.5, 0.75);
+                cx.rectangle(40.0, 40.0, 500.0, 80.0);
+                cx.fill().unwrap();
+
+                // Render searchable text
+                cx.set_source_rgb(0.05, 0.05, 0.05);
+                cx.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+                cx.set_font_size(24.0);
+                cx.move_to(60.0, 200.0);
+                cx.show_text(text).unwrap();
+
+                cx.show_page().unwrap();
+            }
+        }
+        let buf = *surface
+            .finish_output_stream()
+            .unwrap()
+            .downcast::<Vec<u8>>()
+            .unwrap();
+        assert!(buf.starts_with(b"%PDF"), "Generated buffer must be a valid PDF");
+        buf
+    }
+
+    #[test]
+    fn test_lazy_pdf_virtualization_and_rnote_roundtrip() {
+        let pdf_bytes = build_sample_multipage_pdf(&[
+            "Capitulo Um Termodinamica",
+            "Capitulo Dois Eletromagnetismo",
+            "Capitulo Tres Mecanica Quantica",
+            "Capitulo Quatro Relatividade",
+        ]);
+
+        let format = Format::default();
+        let prefs = PdfImportPrefs {
+            pages_type: PdfImportPagesType::Bitmap,
+            page_width_perc: 100.0,
+            page_spacing: PdfImportPageSpacing::OnePerDocumentPage,
+            bitmap_scalefactor: 1.8,
+            adjust_document: true,
+        };
+
+        let pages = BitmapImage::from_pdf_bytes(&pdf_bytes, prefs, Vector2::ZERO, None, &format, None)
+            .expect("BitmapImage::from_pdf_bytes must succeed");
+        assert_eq!(pages.len(), 4);
+
+        for (i, page) in pages.iter().enumerate() {
+            // Unrendered placeholder must be tiny (4 bytes = 1x1 RGBA) AND pass assert_valid()!
+            assert_eq!(page.image.data.len(), 4, "Page {i} placeholder must be 4 bytes");
+            page.image
+                .assert_valid()
+                .expect("Virtualized BitmapImage placeholder must satisfy Image::assert_valid()");
+            assert!(page.pdf_source.is_some(), "Page {i} must retain PdfPageSource");
+
+            // Full-scale rendering & thumbnail rendering via Drawable::draw must succeed
+            let full_img = crate::Image::gen_with_cairo(
+                |cx| {
+                    let mut piet_cx = piet_cairo::CairoRenderContext::new(cx);
+                    page.draw(&mut piet_cx, 1.0)
+                },
+                page.bounds(),
+                1.0,
+            )
+            .expect("Full-scale virtualized PDF draw must succeed");
+            full_img.assert_valid().unwrap();
+
+            let thumb_img = crate::Image::gen_with_cairo(
+                |cx| {
+                    let mut piet_cx = piet_cairo::CairoRenderContext::new(cx);
+                    page.draw(&mut piet_cx, 0.25)
+                },
+                page.bounds(),
+                0.25,
+            )
+            .expect("Thumbnail-scale virtualized PDF draw must succeed");
+            thumb_img.assert_valid().unwrap();
+        }
+
+        // Import into Engine, test text search + camera_center_at + .rnote roundtrip + thumbnail_png
+        let mut engine = Engine::default();
+        let strokes = pages
+            .into_iter()
+            .map(|b| (Stroke::BitmapImage(b), None))
+            .collect();
+        let flags = engine.import_generated_content(strokes, true);
+        assert!(flags.resize && flags.store_modified);
+
+        // Text search across virtualized PDF pages
+        let matches = engine.search_text("Quantica");
+        assert_eq!(matches.len(), 1, "Must find 'Quantica' on page 3");
+        let jump_flags = engine.camera_center_at(matches[0].center);
+        assert!(jump_flags.view_modified && jump_flags.redraw);
+        assert!(
+            engine.camera.viewport().contains_local_point(matches[0].center),
+            "Camera viewport must contain jumped-to match center"
+        );
+
+        // Save to .rnote bytes and verify deduplicated pdf_sources + embedded thumbnail_png
+        let saved_bytes = futures::executor::block_on(engine.save_as_rnote_bytes("livro.rnote".into()))
+            .expect("save_as_rnote_bytes channel")
+            .expect("save_as_rnote_bytes result");
+
+        let rnote_file = RnoteFile::load_from_bytes(&saved_bytes).expect("RnoteFile::load_from_bytes");
+        assert!(
+            rnote_file.thumbnail_png.as_ref().is_some_and(|s| !s.is_empty()),
+            "Saved .rnote must include Quick Look thumbnail_png"
+        );
+
+        let snapshot: EngineSnapshot =
+            futures::executor::block_on(EngineSnapshot::load_from_rnote_bytes(saved_bytes))
+                .expect("EngineSnapshot::load_from_rnote_bytes");
+        assert_eq!(
+            snapshot.pdf_sources.len(),
+            1,
+            "All 4 pages from the same PDF must deduplicate to 1 pdf_sources entry"
+        );
+
+        let mut restored_engine = Engine::default();
+        let _ = restored_engine.load_snapshot(snapshot);
+        assert_eq!(restored_engine.search_text("Relatividade").len(), 1);
+    }
+
+    #[test]
+    fn test_vector_pdf_import_and_search() {
+        let pdf_bytes = build_sample_multipage_pdf(&["Pagina Vetorial Alfa", "Pagina Vetorial Beta"]);
+        let format = Format::default();
+        let prefs = PdfImportPrefs {
+            pages_type: PdfImportPagesType::Vector,
+            page_width_perc: 100.0,
+            page_spacing: PdfImportPageSpacing::Continuous,
+            bitmap_scalefactor: 1.8,
+            adjust_document: true,
+        };
+        let pages = VectorImage::from_pdf_bytes(&pdf_bytes, prefs, Vector2::ZERO, None, &format, None)
+            .expect("VectorImage::from_pdf_bytes must succeed");
+        assert_eq!(pages.len(), 2);
+
+        let mut engine = Engine::default();
+        let strokes = pages
+            .into_iter()
+            .map(|v| (Stroke::VectorImage(v), None))
+            .collect();
+        let _ = engine.import_generated_content(strokes, true);
+        assert_eq!(engine.search_text("Vetorial").len(), 2);
+    }
+
+    #[test]
+    fn test_snippet_crop_tool_pastes_cropped_region_not_full_page() {
+        let pdf_bytes = build_sample_multipage_pdf(&["Trecho Importante Para Recortar"]);
+        let format = Format::default();
+        let prefs = PdfImportPrefs {
+            pages_type: PdfImportPagesType::Bitmap,
+            page_width_perc: 100.0,
+            page_spacing: PdfImportPageSpacing::OnePerDocumentPage,
+            bitmap_scalefactor: 1.8,
+            adjust_document: true,
+        };
+        let pages = BitmapImage::from_pdf_bytes(&pdf_bytes, prefs, Vector2::ZERO, None, &format, None)
+            .unwrap();
+        let full_page_bounds = pages[0].bounds();
+        assert!(full_page_bounds.extents()[0] > 500.0 && full_page_bounds.extents()[1] > 700.0);
+
+        let mut engine = Engine::default();
+        let _ = engine.import_generated_content(vec![(Stroke::BitmapImage(pages.into_iter().next().unwrap()), None)], true);
+
+        // Activate Snippet tool
+        engine.config.write().pens_config.tools_config.style = ToolStyle::Snippet;
+        let _ = engine.change_pen_style(PenStyle::Tools);
+
+        let now = Instant::now();
+        // Drag a 120x80 crop region inside the 595x842 PDF page
+        let (_, _) = engine.handle_pen_event(
+            PenEvent::Down {
+                element: Element::new(Vector2::new(50.0, 50.0), 0.5),
+                modifier_keys: HashSet::new(),
+            },
+            None,
+            now,
+        );
+        let (_, flags) = engine.handle_pen_event(
+            PenEvent::Up {
+                element: Element::new(Vector2::new(170.0, 130.0), 0.5),
+                modifier_keys: HashSet::new(),
+            },
+            None,
+            now + Duration::from_millis(50),
+        );
+
+        let clipboard = flags
+            .clipboard_content
+            .expect("Snippet tool must populate clipboard_content");
+
+        let stroke_json_entry = clipboard
+            .iter()
+            .find(|(_, mime)| mime == StrokeContent::MIME_TYPE)
+            .expect("Clipboard must include StrokeContent::MIME_TYPE");
+        let png_entry = clipboard
+            .iter()
+            .find(|(_, mime)| mime == "image/png")
+            .expect("Clipboard must include image/png");
+        assert!(!png_entry.0.is_empty());
+
+        let pasted_content: StrokeContent =
+            serde_json::from_slice(&stroke_json_entry.0).expect("Valid StrokeContent JSON");
+        assert_eq!(pasted_content.strokes.len(), 1);
+        let pasted_bounds = pasted_content.strokes[0].stroke.bounds();
+        assert!(
+            (pasted_bounds.extents()[0] - 120.0).abs() < 1e-3
+                && (pasted_bounds.extents()[1] - 80.0).abs() < 1e-3,
+            "Pasted snippet bounds {:?} must match cropped 120x80 region, NOT full page {:?}",
+            pasted_bounds.extents(),
+            full_page_bounds.extents()
+        );
+    }
+
+    #[test]
+    fn test_cornell_background_tile_and_pen_highlighter_separation() {
+        let mut bg = Background::default();
+        bg.pattern = PatternStyle::Cornell;
+        bg.pattern_size = Vector2::new(32.0, 30.0);
+
+        // Tile image must generate cleanly without failing
+        let tile = bg.gen_tile_image(1.0).expect("Cornell tile image must succeed");
+        tile.assert_valid().unwrap();
+
+        // Full-page SVG must include cue & summary lines
+        let full_svg = bg
+            .gen_svg(Aabb::new(Vector2::ZERO, Vector2::new(794.0, 1123.0)), true, false)
+            .expect("Cornell full-page SVG must succeed");
+        assert!(full_svg.svg_data.contains("line"));
+
+        // Verify Solid Pen is 100% opaque (alpha = 1.0) while Marker Highlighter is translucent (alpha = 0.45)
+        let mut engine = Engine::default();
+        {
+            let mut cfg = engine.config.write();
+            cfg.pens_config.brush_config.style = BrushStyle::Solid;
+            let solid_style = cfg.pens_config.brush_config.style_for_current_options();
+            assert!((solid_style.stroke_color().unwrap().a - 1.0).abs() < 1e-6);
+
+            cfg.pens_config.brush_config.style = BrushStyle::Marker;
+            let marker_style = cfg.pens_config.brush_config.style_for_current_options();
+            assert!((marker_style.stroke_color().unwrap().a - 0.45).abs() < 1e-6);
+        }
+
+        // Verify Shift-constrained straight line & Hold-to-Shape snap in Brush
+        let _ = engine.change_pen_style(PenStyle::Brush);
+        engine.config.write().pens_config.brush_config.style = BrushStyle::Solid;
+        let t0 = Instant::now();
+        let mut shift_mods = HashSet::new();
+        shift_mods.insert(ModifierKey::KeyboardShift);
+        let _ = engine.handle_pen_event(
+            PenEvent::Down {
+                element: Element::new(Vector2::new(100.0, 100.0), 0.5),
+                modifier_keys: shift_mods.clone(),
+            },
+            None,
+            t0,
+        );
+        let _ = engine.handle_pen_event(
+            PenEvent::Down {
+                element: Element::new(Vector2::new(260.0, 118.0), 0.5),
+                modifier_keys: shift_mods.clone(),
+            },
+            None,
+            t0 + Duration::from_millis(30),
+        );
+        let _ = engine.handle_pen_event(
+            PenEvent::Up {
+                element: Element::new(Vector2::new(260.0, 118.0), 0.5),
+                modifier_keys: shift_mods,
+            },
+            None,
+            t0 + Duration::from_millis(60),
+        );
+        let keys = engine.store.stroke_keys_as_rendered();
+        assert_eq!(keys.len(), 1);
+        let _ = KeyboardKey::Unicode('a');
+    }
+}

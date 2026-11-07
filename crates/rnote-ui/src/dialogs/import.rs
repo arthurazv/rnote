@@ -313,6 +313,7 @@ pub(crate) async fn pdf_encryption_check_and_dialog(
 pub(crate) async fn dialog_import_pdf_w_prefs(
     appwindow: &RnAppWindow,
     canvas: &RnCanvas,
+    pending_new_wrapper: Option<&crate::RnCanvasWrapper>,
     input_file: gio::File,
     target_pos: Option<Vector2>,
 ) -> anyhow::Result<bool> {
@@ -362,20 +363,48 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
         .pdf_import_prefs;
 
     // Set the widget state from the pdf import prefs
+    let n_pages = pdf.pages().len().max(1);
+    let all_page_dims: Vec<(f32, f32)> =
+        pdf.pages().iter().map(|p| p.render_dimensions()).collect();
+
     pdf_import_width_row.set_value(pdf_import_prefs.page_width_perc);
-    match pdf_import_prefs.pages_type {
-        PdfImportPagesType::Bitmap => {
-            pdf_import_as_bitmap_toggle.set_active(true);
-            pdf_import_bitmap_scalefactor_row.set_sensitive(true);
-        }
-        PdfImportPagesType::Vector => {
-            pdf_import_as_vector_toggle.set_active(true);
-            pdf_import_bitmap_scalefactor_row.set_sensitive(false);
+    // For large PDFs / books (> 20 pages), default to virtualized Bitmap mode to avoid
+    // multi-second SVG conversion stalls and high RAM usage, while still letting the user toggle Vector.
+    if n_pages > 20 {
+        appwindow
+            .engine_config()
+            .write()
+            .import_prefs
+            .pdf_import_prefs
+            .pages_type = PdfImportPagesType::Bitmap;
+        pdf_import_as_bitmap_toggle.set_active(true);
+        pdf_import_bitmap_scalefactor_row.set_sensitive(true);
+    } else {
+        match pdf_import_prefs.pages_type {
+            PdfImportPagesType::Bitmap => {
+                pdf_import_as_bitmap_toggle.set_active(true);
+                pdf_import_bitmap_scalefactor_row.set_sensitive(true);
+            }
+            PdfImportPagesType::Vector => {
+                pdf_import_as_vector_toggle.set_active(true);
+                pdf_import_bitmap_scalefactor_row.set_sensitive(false);
+            }
         }
     }
     pdf_import_page_spacing_row.set_selected(pdf_import_prefs.page_spacing.to_u32().unwrap());
     pdf_import_bitmap_scalefactor_row.set_value(pdf_import_prefs.bitmap_scalefactor);
     pdf_import_adjust_document_row.set_active(pdf_import_prefs.adjust_document);
+
+    // If importing onto an existing non-empty canvas (e.g. drag-and-drop onto notes), default format to Custom / Current
+    if !canvas.empty() && pending_new_wrapper.is_none() {
+        pdf_import_page_format_row.set_selected(2);
+    }
+
+    // Configure page spinners BEFORE binding lower/upper constraints so upper isn't clamped to 0..1!
+    pdf_page_start_row.set_range(1.0, n_pages as f64);
+    pdf_page_start_row.set_value(1.0);
+    pdf_page_end_row.set_range(1.0, n_pages as f64);
+    pdf_page_end_row.set_value(n_pages as f64);
 
     pdf_page_start_row
         .bind_property("value", &pdf_page_end_row.adjustment(), "lower")
@@ -385,6 +414,16 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
         .bind_property("value", &pdf_page_start_row.adjustment(), "upper")
         .sync_create()
         .build();
+
+    pdf_import_width_row.connect_value_notify(clone!(
+        #[weak]
+        pdf_import_page_format_row,
+        move |_| {
+            if pdf_import_page_format_row.selected() != 2 {
+                pdf_import_page_format_row.set_selected(2);
+            }
+        }
+    ));
 
     // Update preferences
     pdf_import_as_vector_toggle.connect_toggled(clone!(
@@ -513,13 +552,6 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                 gettext("Pages:"))
         );
 
-    // Configure pages spinners
-    pdf_page_start_row.set_range(1.into(), n_pages as f64);
-    pdf_page_start_row.set_value(1.into());
-
-    pdf_page_end_row.set_range(1.into(), n_pages as f64);
-    pdf_page_end_row.set_value(n_pages as f64);
-
     // Listen to responses
 
     let (tx, mut rx_confirm) = futures::channel::mpsc::unbounded::<(bool, bool)>();
@@ -573,103 +605,236 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
             }
             if confirm {
                 appwindow.overlays().progressbar_start_pulsing();
+                let saved_prefs = appwindow
+                    .engine_config()
+                    .read()
+                    .import_prefs
+                    .pdf_import_prefs;
 
-                if destination == 1 {
-                    // Each Page in a New Tab
-                    let pdf_data_vec = Arc::unwrap_or_clone(pdf_data);
-                    for page_idx in page_range {
-                        let wrapper = appwindow.new_canvas_wrapper();
-                        let page_canvas = wrapper.canvas();
+                let import_res: anyhow::Result<()> = async {
+                    if destination == 1 {
+                        // Each Page in a New Tab
+                        let pdf_data_vec = Arc::unwrap_or_clone(pdf_data);
+                        let mut reuse_empty_active = pending_new_wrapper.is_none()
+                            && canvas.empty()
+                            && canvas.output_file().is_none();
 
-                        let parsed_dims = if let Ok(pdf_parsed) = if let Some(ref pw) = password {
-                            hayro_syntax::Pdf::new_with_password(Arc::new(pdf_data_vec.clone()), pw)
-                        } else {
-                            hayro_syntax::Pdf::new(Arc::new(pdf_data_vec.clone()))
-                        } {
-                            pdf_parsed.pages().get(page_idx).map(|p| p.render_dimensions())
+                        for page_idx in page_range {
+                            let (tab_page, page_canvas) = if reuse_empty_active {
+                                reuse_empty_active = false;
+                                if let Some(active_page) = appwindow.active_tab_page() {
+                                    (active_page, canvas.clone())
+                                } else {
+                                    let wrapper = appwindow.new_canvas_wrapper();
+                                    let c = wrapper.canvas();
+                                    let tp = appwindow.append_wrapper_new_tab(&wrapper);
+                                    (tp, c)
+                                }
+                            } else {
+                                let wrapper = appwindow.new_canvas_wrapper();
+                                let c = wrapper.canvas();
+                                // Attach tab BEFORE loading so scale_factor and widget_flags signal are connected!
+                                let tp = appwindow.append_wrapper_new_tab(&wrapper);
+                                (tp, c)
+                            };
+
+                            let parsed_dims = all_page_dims.get(page_idx).copied();
+                            let pos_for_page = match page_format {
+                                0 => {
+                                    // Original Size: fit document format cleanly to exact PDF page dimensions
+                                    appwindow
+                                        .engine_config()
+                                        .write()
+                                        .import_prefs
+                                        .pdf_import_prefs
+                                        .adjust_document = true;
+                                    Some(Vector2::ZERO)
+                                }
+                                1 => {
+                                    // Fixed A4
+                                    let is_landscape = parsed_dims
+                                        .map(|(pw, ph)| pw > ph)
+                                        .unwrap_or(false);
+                                    let (w_mm, h_mm) = if is_landscape {
+                                        (297.0, 210.0)
+                                    } else {
+                                        (210.0, 297.0)
+                                    };
+                                    let (w_px, h_px) = {
+                                        let mut engine = page_canvas.engine_mut();
+                                        let dpi = engine.document.config.format.dpi();
+                                        let w_px = (w_mm
+                                            / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH)
+                                            * dpi;
+                                        let h_px = (h_mm
+                                            / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH)
+                                            * dpi;
+                                        engine.document.config.format.set_width(w_px);
+                                        engine.document.config.format.set_height(h_px);
+                                        let _ = engine.set_doc_layout(
+                                            rnote_engine::document::Layout::FixedSize,
+                                        );
+                                        (w_px, h_px)
+                                    };
+                                    let fit_perc = if let Some((pw, ph)) = parsed_dims
+                                        && pw > 0.0
+                                        && ph > 0.0
+                                    {
+                                        let scaled_h = (ph as f64) * (w_px / pw as f64);
+                                        ((h_px / scaled_h).min(1.0) * 100.0).clamp(10.0, 100.0)
+                                    } else {
+                                        100.0
+                                    };
+                                    {
+                                        let mut cfg = appwindow.engine_config().write();
+                                        cfg.import_prefs.pdf_import_prefs.adjust_document = false;
+                                        cfg.import_prefs.pdf_import_prefs.page_width_perc =
+                                            fit_perc;
+                                    }
+                                    Some(Vector2::ZERO)
+                                }
+                                _ => {
+                                    appwindow
+                                        .engine_config()
+                                        .write()
+                                        .import_prefs
+                                        .pdf_import_prefs = saved_prefs;
+                                    target_pos
+                                }
+                            };
+
+                            page_canvas
+                                .load_in_pdf_bytes(
+                                    appwindow,
+                                    pdf_data_vec.clone(),
+                                    pos_for_page,
+                                    Some(page_idx..page_idx + 1),
+                                    password.clone(),
+                                )
+                                .await?;
+
+                            if page_format == 1 {
+                                let flags = page_canvas.engine_mut().deselect_all_strokes()
+                                    | page_canvas
+                                        .engine_mut()
+                                        .change_pen_style(rnote_engine::pens::PenStyle::Brush);
+                                appwindow.handle_widget_flags(flags, &page_canvas);
+                            }
+
+                            tab_page.set_title(&format!("{file_name} - {}", page_idx + 1));
+                        }
+                    } else {
+                        // Single Document in target canvas
+                        let tab_page_opt = if let Some(wrapper) = pending_new_wrapper {
+                            // Attach new tab BEFORE loading so widget_flags and Retina scale_factor apply!
+                            Some(appwindow.append_wrapper_new_tab(wrapper))
                         } else {
                             None
                         };
 
-                        match page_format {
-                            0 => {
-                                // Original Size
-                                if let Some((pw, ph)) = parsed_dims {
-                                    let mut engine = page_canvas.engine_mut();
-                                    engine.document.config.format.set_width(pw as f64);
-                                    engine.document.config.format.set_height(ph as f64);
-                                    let _ = engine.set_doc_layout(rnote_engine::document::Layout::FixedSize);
-                                }
+                        let first_dims = page_range
+                            .clone()
+                            .find_map(|idx| all_page_dims.get(idx).copied());
+
+                        let effective_pos = match page_format {
+                            0 if canvas.empty() => {
+                                // Original Size on a fresh document: adjust format & layout to match PDF pages
+                                appwindow
+                                    .engine_config()
+                                    .write()
+                                    .import_prefs
+                                    .pdf_import_prefs
+                                    .adjust_document = true;
+                                Some(Vector2::ZERO)
                             }
                             1 => {
                                 // Fixed A4
-                                let orientation = if let Some((pw, ph)) = parsed_dims {
-                                    if pw > ph {
-                                        rnote_engine::document::format::Orientation::Landscape
-                                    } else {
-                                        rnote_engine::document::format::Orientation::Portrait
-                                    }
-                                } else {
-                                    rnote_engine::document::format::Orientation::Portrait
-                                };
-                                let (w_mm, h_mm) = if orientation == rnote_engine::document::format::Orientation::Landscape {
+                                let is_landscape = first_dims
+                                    .map(|(pw, ph)| pw > ph)
+                                    .unwrap_or(false);
+                                let (w_mm, h_mm) = if is_landscape {
                                     (297.0, 210.0)
                                 } else {
                                     (210.0, 297.0)
                                 };
-                                let mut engine = page_canvas.engine_mut();
-                                let dpi = engine.document.config.format.dpi();
-                                let w_px = (w_mm / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH) * dpi;
-                                let h_px = (h_mm / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH) * dpi;
-                                engine.document.config.format.set_width(w_px);
-                                engine.document.config.format.set_height(h_px);
-                                let _ = engine.set_doc_layout(rnote_engine::document::Layout::FixedSize);
+                                let (w_px, h_px) = {
+                                    let mut engine = canvas.engine_mut();
+                                    let dpi = engine.document.config.format.dpi();
+                                    let w_px = (w_mm
+                                        / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH)
+                                        * dpi;
+                                    let h_px = (h_mm
+                                        / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH)
+                                        * dpi;
+                                    engine.document.config.format.set_width(w_px);
+                                    engine.document.config.format.set_height(h_px);
+                                    if canvas.empty() {
+                                        let _ = engine.set_doc_layout(
+                                            rnote_engine::document::Layout::FixedSize,
+                                        );
+                                    }
+                                    (w_px, h_px)
+                                };
+                                let fit_perc = if let Some((pw, ph)) = first_dims
+                                    && pw > 0.0
+                                    && ph > 0.0
+                                {
+                                    let scaled_h = (ph as f64) * (w_px / pw as f64);
+                                    ((h_px / scaled_h).min(1.0) * 100.0).clamp(10.0, 100.0)
+                                } else {
+                                    100.0
+                                };
+                                {
+                                    let mut cfg = appwindow.engine_config().write();
+                                    cfg.import_prefs.pdf_import_prefs.adjust_document = false;
+                                    cfg.import_prefs.pdf_import_prefs.page_width_perc = fit_perc;
+                                    if canvas.empty() {
+                                        cfg.import_prefs.pdf_import_prefs.page_spacing =
+                                            PdfImportPageSpacing::OnePerDocumentPage;
+                                    }
+                                }
+                                if canvas.empty() {
+                                    Some(Vector2::ZERO)
+                                } else {
+                                    target_pos
+                                }
                             }
-                            _ => {
-                                // Custom / Current format from default preset
-                            }
-                        }
+                            _ => target_pos,
+                        };
 
-                        page_canvas
+                        canvas
                             .load_in_pdf_bytes(
                                 appwindow,
-                                pdf_data_vec.clone(),
-                                target_pos,
-                                Some(page_idx..page_idx + 1),
-                                password.clone(),
+                                Arc::unwrap_or_clone(pdf_data),
+                                effective_pos,
+                                Some(page_range),
+                                password,
                             )
                             .await?;
 
-                        let tab_page = appwindow.append_wrapper_new_tab(&wrapper);
-                        tab_page.set_title(&format!("{file_name} - {}", page_idx + 1));
+                        if page_format == 1 && target_pos.is_none() {
+                            let flags = canvas.engine_mut().deselect_all_strokes()
+                                | canvas
+                                    .engine_mut()
+                                    .change_pen_style(rnote_engine::pens::PenStyle::Brush);
+                            appwindow.handle_widget_flags(flags, canvas);
+                        }
+
+                        if let Some(tp) = tab_page_opt {
+                            tp.set_title(&file_name);
+                        }
                     }
-                } else {
-                    // Single Document in current canvas
-                    if page_format == 1 {
-                        // Fixed A4
-                        let mut engine = canvas.engine_mut();
-                        let orientation = engine.document.config.format.orientation();
-                        let (w_mm, h_mm) = if orientation == rnote_engine::document::format::Orientation::Landscape {
-                            (297.0, 210.0)
-                        } else {
-                            (210.0, 297.0)
-                        };
-                        let dpi = engine.document.config.format.dpi();
-                        let w_px = (w_mm / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH) * dpi;
-                        let h_px = (h_mm / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH) * dpi;
-                        engine.document.config.format.set_width(w_px);
-                        engine.document.config.format.set_height(h_px);
-                    }
-                    canvas
-                        .load_in_pdf_bytes(
-                            appwindow,
-                            Arc::unwrap_or_clone(pdf_data),
-                            target_pos,
-                            Some(page_range),
-                            password,
-                        )
-                        .await?;
+                    Ok(())
                 }
+                .await;
+
+                appwindow
+                    .engine_config()
+                    .write()
+                    .import_prefs
+                    .pdf_import_prefs = saved_prefs;
+
+                import_res?;
                 Ok(true)
             } else {
                 Ok(false)
@@ -686,7 +851,7 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
 /// Returns true when the file was imported, else false.
 pub(crate) async fn dialog_import_xopp_w_prefs(
     appwindow: &RnAppWindow,
-    canvas: &RnCanvas,
+    wrapper: &crate::RnCanvasWrapper,
     input_file: gio::File,
 ) -> anyhow::Result<bool> {
     let builder = Builder::from_resource(
@@ -766,7 +931,11 @@ pub(crate) async fn dialog_import_xopp_w_prefs(
             if confirm {
                 appwindow.overlays().progressbar_start_pulsing();
                 let (bytes, _) = input_file.load_bytes_future().await?;
-                canvas.load_in_xopp_bytes(appwindow, bytes.to_vec()).await?;
+                appwindow.append_wrapper_new_tab(wrapper);
+                wrapper
+                    .canvas()
+                    .load_in_xopp_bytes(appwindow, bytes.to_vec())
+                    .await?;
                 Ok(true)
             } else {
                 Ok(false)

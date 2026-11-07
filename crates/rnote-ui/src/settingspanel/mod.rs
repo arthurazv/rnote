@@ -1087,35 +1087,79 @@ impl RnSettingsPanel {
             ));
 
         // Quick study notebook presets
+        let apply_template_preset = |appwindow: &RnAppWindow,
+                                     settingspanel: &RnSettingsPanel,
+                                     pattern: PatternStyle,
+                                     size: Option<(f64, f64)>| {
+            if let Some(canvas) = appwindow.active_tab_canvas() {
+                {
+                    let mut engine = canvas.engine_mut();
+                    engine.document.config.background.pattern = pattern;
+                    if let Some((w, h)) = size {
+                        engine.document.config.background.pattern_size[0] = w;
+                        engine.document.config.background.pattern_size[1] = h;
+                    }
+                }
+                let mut widget_flags = canvas.engine_mut().background_rendering_regenerate();
+                widget_flags.store_modified = true;
+                appwindow.handle_widget_flags(widget_flags, &canvas);
+            }
+            settingspanel.set_background_pattern(pattern);
+            appwindow.refresh_ui();
+        };
+
         imp.template_preset_cornell_btn.connect_clicked(clone!(
+            #[weak]
+            appwindow,
             #[weak(rename_to = settingspanel)]
             self,
             move |_| {
-                settingspanel.set_background_pattern(PatternStyle::Cornell);
+                apply_template_preset(
+                    &appwindow,
+                    &settingspanel,
+                    PatternStyle::Cornell,
+                    Some((32.0, 30.0)),
+                );
             }
         ));
 
         imp.template_preset_ruled_btn.connect_clicked(clone!(
+            #[weak]
+            appwindow,
             #[weak(rename_to = settingspanel)]
             self,
             move |_| {
-                settingspanel.set_background_pattern(PatternStyle::Lines);
+                apply_template_preset(
+                    &appwindow,
+                    &settingspanel,
+                    PatternStyle::Lines,
+                    Some((32.0, 26.0)),
+                );
             }
         ));
 
         imp.template_preset_grid_btn.connect_clicked(clone!(
+            #[weak]
+            appwindow,
             #[weak(rename_to = settingspanel)]
             self,
             move |_| {
-                settingspanel.set_background_pattern(PatternStyle::Grid);
+                apply_template_preset(
+                    &appwindow,
+                    &settingspanel,
+                    PatternStyle::Grid,
+                    Some((24.0, 24.0)),
+                );
             }
         ));
 
         imp.template_preset_blank_btn.connect_clicked(clone!(
+            #[weak]
+            appwindow,
             #[weak(rename_to = settingspanel)]
             self,
             move |_| {
-                settingspanel.set_background_pattern(PatternStyle::None);
+                apply_template_preset(&appwindow, &settingspanel, PatternStyle::None, None);
             }
         ));
 

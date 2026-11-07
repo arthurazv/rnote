@@ -27,6 +27,21 @@ mod imp {
 
     impl Default for RnWorkspaceListEntryInner {
         fn default() -> Self {
+            #[cfg(target_os = "macos")]
+            {
+                let icloud_rnote = glib::home_dir()
+                    .join("Library/Mobile Documents/com~apple~CloudDocs/Rnote");
+                let _ = std::fs::create_dir_all(&icloud_rnote);
+                if icloud_rnote.exists() {
+                    return Self {
+                        dir: icloud_rnote,
+                        icon: String::from("workspacelistentryicon-folder-symbolic"),
+                        color: super::RnWorkspaceListEntry::COLOR_DEFAULT.as_rgba_u32(),
+                        name: String::from("iCloud Rnote"),
+                    };
+                }
+            }
+
             let dir = std::env::home_dir().unwrap_or_else(|| {
                 if cfg!(target_os = "windows") {
                     PathBuf::from("C:\\")

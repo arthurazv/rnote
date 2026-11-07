@@ -28,6 +28,8 @@ pub mod tasks;
 pub mod textsearch;
 pub mod utils;
 pub mod widgetflags;
+#[cfg(test)]
+mod roadmap_audit_tests;
 
 // Re-exports
 #[cfg(feature = "ui")]

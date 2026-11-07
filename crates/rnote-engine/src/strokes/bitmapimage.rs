@@ -16,9 +16,164 @@ use rnote_compose::Transformable;
 use rnote_compose::ext::{AabbExt, DAffine2Ext};
 use rnote_compose::shapes::Rectangle;
 use rnote_compose::shapes::Shapeable;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+const PDF_DOC_REGISTRY_CAP: usize = 12;
+const PDF_PAGE_CACHE_CAP: usize = 32;
+const PDF_THUMB_CACHE_CAP: usize = 128;
+
+static PDF_DOC_REGISTRY: Lazy<Mutex<VecDeque<(u64, Arc<Vec<u8>>)>>> =
+    Lazy::new(|| Mutex::new(VecDeque::with_capacity(PDF_DOC_REGISTRY_CAP)));
+
+type RenderedPageEntry = ((u64, usize, u32), (u32, u32, glib::Bytes));
+
+static PDF_PAGE_CACHE: Lazy<Mutex<VecDeque<RenderedPageEntry>>> =
+    Lazy::new(|| Mutex::new(VecDeque::with_capacity(PDF_PAGE_CACHE_CAP)));
+
+static PDF_THUMB_CACHE: Lazy<Mutex<VecDeque<RenderedPageEntry>>> =
+    Lazy::new(|| Mutex::new(VecDeque::with_capacity(PDF_THUMB_CACHE_CAP)));
+
+pub fn compute_pdf_doc_hash(bytes: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.len().hash(&mut hasher);
+    // Hash up to first 64 KB + middle 64 KB + last 64 KB for O(1) speed on 200 MB books,
+    // or full slice if <= 192 KB.
+    if bytes.len() <= 196_608 {
+        bytes.hash(&mut hasher);
+    } else {
+        bytes[..65_536].hash(&mut hasher);
+        let mid = bytes.len() / 2;
+        bytes[mid..mid + 65_536].hash(&mut hasher);
+        bytes[bytes.len() - 65_536..].hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+pub fn register_pdf_doc_bytes(doc_hash: u64, bytes: Arc<Vec<u8>>) {
+    let mut reg = PDF_DOC_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(pos) = reg.iter().position(|(h, _)| *h == doc_hash) {
+        let entry = reg.remove(pos).unwrap();
+        reg.push_front(entry);
+        return;
+    }
+    if reg.len() >= PDF_DOC_REGISTRY_CAP {
+        reg.pop_back();
+    }
+    reg.push_front((doc_hash, bytes));
+}
+
+pub fn lookup_pdf_doc_bytes(doc_hash: u64) -> Option<Arc<Vec<u8>>> {
+    let mut reg = PDF_DOC_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(pos) = reg.iter().position(|(h, _)| *h == doc_hash) {
+        let entry = reg.remove(pos).unwrap();
+        let bytes = Arc::clone(&entry.1);
+        reg.push_front(entry);
+        return Some(bytes);
+    }
+    None
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PdfPageSource {
+    pub doc_hash: u64,
+    #[serde(skip)]
+    pub pdf_bytes: Option<Arc<Vec<u8>>>,
+    pub page_index: usize,
+    pub x_scale: f32,
+    pub y_scale: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+}
+
+impl PdfPageSource {
+    pub fn resolved_bytes(&self) -> Option<Arc<Vec<u8>>> {
+        self.pdf_bytes
+            .as_ref()
+            .cloned()
+            .or_else(|| lookup_pdf_doc_bytes(self.doc_hash))
+    }
+
+    pub fn render_at_factor(&self, scale_multiplier: f32, is_thumbnail: bool) -> anyhow::Result<(u32, u32, glib::Bytes)> {
+        let eff_x = (self.x_scale * scale_multiplier).clamp(0.12, 8.0);
+        let eff_y = (self.y_scale * scale_multiplier).clamp(0.12, 8.0);
+        let scale_key = (eff_x * 1000.0).round() as u32;
+        let cache_key = (self.doc_hash, self.page_index, scale_key);
+
+        let cache = if is_thumbnail {
+            &PDF_THUMB_CACHE
+        } else {
+            &PDF_PAGE_CACHE
+        };
+        let cap = if is_thumbnail {
+            PDF_THUMB_CACHE_CAP
+        } else {
+            PDF_PAGE_CACHE_CAP
+        };
+
+        {
+            let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(pos) = guard.iter().position(|(k, _)| *k == cache_key) {
+                let entry = guard.remove(pos).unwrap();
+                let res = entry.1.clone();
+                guard.push_front(entry);
+                return Ok(res);
+            }
+        }
+
+        let pdf_data = self
+            .resolved_bytes()
+            .ok_or_else(|| anyhow!("PDF source bytes unavailable for doc_hash {:016x}", self.doc_hash))?;
+
+        let pdf = if let Some(ref pw) = self.password {
+            hayro_syntax::Pdf::new_with_password(pdf_data, pw)
+                .map_err(|err| anyhow!("Creating Pdf instance failed, Err: {err:?}"))?
+        } else {
+            hayro_syntax::Pdf::new(pdf_data)
+                .map_err(|err| anyhow!("Creating Pdf instance failed, Err: {err:?}"))?
+        };
+        let page = pdf
+            .pages()
+            .get(self.page_index)
+            .ok_or_else(|| anyhow!("No PDF page at index {}", self.page_index))?;
+
+        let render_cache = hayro::RenderCache::new();
+        let interpreter_settings = hayro_interpret::InterpreterSettings::default();
+        let render_settings = hayro::RenderSettings::default();
+        let pixmap_settings = hayro::PixmapSettings {
+            x_scale: eff_x,
+            y_scale: eff_y,
+            bg_color: vello_cpu::color::AlphaColor::WHITE,
+        };
+        let pixmap = hayro::render(
+            page,
+            &render_cache,
+            &interpreter_settings,
+            &render_settings,
+            &pixmap_settings,
+        );
+        let pw = u32::from(pixmap.width()).max(1);
+        let ph = u32::from(pixmap.height()).max(1);
+        let bytes = glib::Bytes::from(pixmap.data_as_u8_slice());
+        let rendered = (pw, ph, bytes);
+
+        {
+            let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(pos) = guard.iter().position(|(k, _)| *k == cache_key) {
+                guard.remove(pos);
+            } else if guard.len() >= cap {
+                guard.pop_back();
+            }
+            guard.push_front((cache_key, rendered.clone()));
+        }
+
+        Ok(rendered)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename = "bitmapimage")]
@@ -33,6 +188,8 @@ pub struct BitmapImage {
     pub rectangle: Rectangle,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text_runs: Vec<crate::textsearch::TextRun>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pdf_source: Option<PdfPageSource>,
 }
 
 impl Default for BitmapImage {
@@ -41,6 +198,7 @@ impl Default for BitmapImage {
             image: Image::default(),
             rectangle: Rectangle::default(),
             text_runs: Vec::new(),
+            pdf_source: None,
         }
     }
 }
@@ -50,12 +208,42 @@ impl Content for BitmapImage {
 }
 
 impl Drawable for BitmapImage {
-    fn draw(&self, cx: &mut impl piet::RenderContext, _image_scale: f64) -> anyhow::Result<()> {
-        let piet_image_format = piet::ImageFormat::from(self.image.memory_format);
-
+    fn draw(&self, cx: &mut impl piet::RenderContext, image_scale: f64) -> anyhow::Result<()> {
         cx.save().map_err(|e| anyhow::anyhow!("{e:?}"))?;
         cx.transform(self.rectangle.affine.to_kurbo());
+        let dest_rect = self.rectangle.cuboid.local_aabb().to_kurbo_rect();
 
+        if let Some(ref src) = self.pdf_source {
+            let is_thumb = image_scale < 0.45;
+            let mult = if is_thumb {
+                // Render thumbnail directly at small scale without polluting full-res LRU cache
+                (image_scale as f32).clamp(0.12, 0.45)
+            } else if image_scale > 1.5 {
+                // Boost crispness slightly when zoomed in deeply, capped for memory safety
+                (image_scale as f32 / 1.5).clamp(1.0, 2.0)
+            } else {
+                1.0
+            };
+            if let Ok((pw, ph, data)) = src.render_at_factor(mult, is_thumb) {
+                let piet_image = cx
+                    .make_image(
+                        pw as usize,
+                        ph as usize,
+                        &data,
+                        piet::ImageFormat::RgbaPremul,
+                    )
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Make piet image from virtualized PDF page failed, Err: {e:?}"
+                        )
+                    })?;
+                cx.draw_image(&piet_image, dest_rect, piet::InterpolationMode::Bilinear);
+                cx.restore().map_err(|e| anyhow::anyhow!("{e:?}"))?;
+                return Ok(());
+            }
+        }
+
+        let piet_image_format = piet::ImageFormat::from(self.image.memory_format);
         let piet_image = cx
             .make_image(
                 self.image.pixel_width as usize,
@@ -66,7 +254,6 @@ impl Drawable for BitmapImage {
             .map_err(|e| {
                 anyhow::anyhow!("Make piet image in BitmapImage draw impl failed, Err: {e:?}")
             })?;
-        let dest_rect = self.rectangle.cuboid.local_aabb().to_kurbo_rect();
         cx.draw_image(&piet_image, dest_rect, piet::InterpolationMode::Bilinear);
         cx.restore().map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
@@ -130,6 +317,7 @@ impl BitmapImage {
             image,
             rectangle,
             text_runs: Vec::new(),
+            pdf_source: None,
         })
     }
 
@@ -141,7 +329,9 @@ impl BitmapImage {
         format: &Format,
         password: Option<String>,
     ) -> Result<Vec<Self>, anyhow::Error> {
+        let doc_hash = compute_pdf_doc_hash(to_be_read);
         let data = Arc::new(to_be_read.to_vec());
+        register_pdf_doc_bytes(doc_hash, Arc::clone(&data));
         let pdf = if let Some(ref pw) = password {
             hayro_syntax::Pdf::new_with_password(Arc::clone(&data), pw)
                 .map_err(|err| anyhow!("Creating Pdf instance failed, Err: {err:?}"))?
@@ -149,7 +339,6 @@ impl BitmapImage {
             hayro_syntax::Pdf::new(Arc::clone(&data))
                 .map_err(|err| anyhow!("Creating Pdf instance failed, Err: {err:?}"))?
         };
-        let interpreter_settings = hayro_interpret::InterpreterSettings::default();
         let pages = pdf.pages();
         let page_range = page_range.unwrap_or(0..pages.len());
         let page_width = if pdf_import_prefs.adjust_document {
@@ -226,6 +415,9 @@ impl BitmapImage {
             })
             .collect::<anyhow::Result<Vec<(usize, Vector2, Vector2)>>>()?;
 
+        let base_scale = (pdf_import_prefs.bitmap_scalefactor * page_zoom_fit) as f32;
+        static PLACEHOLDER_WHITE_RGBA: [u8; 4] = [255, 255, 255, 255];
+
         page_layouts
             .into_par_iter()
             .map(|(page_i, image_pos, image_size)| {
@@ -233,31 +425,14 @@ impl BitmapImage {
                     .get(page_i)
                     .ok_or_else(|| anyhow::anyhow!("no page at index '{page_i}'"))?;
 
-                let render_cache = hayro::RenderCache::new();
-                let render_settings = hayro::RenderSettings::default();
-                let pixmap_settings = hayro::PixmapSettings {
-                    x_scale: (pdf_import_prefs.bitmap_scalefactor * page_zoom_fit) as f32,
-                    y_scale: (pdf_import_prefs.bitmap_scalefactor * page_zoom_fit) as f32,
-                    bg_color: vello_cpu::color::AlphaColor::WHITE,
-                };
-                let pixmap = hayro::render(
-                    page,
-                    &render_cache,
-                    &interpreter_settings,
-                    &render_settings,
-                    &pixmap_settings,
-                );
-                let pixel_width = u32::from(pixmap.width());
-                let pixel_height = u32::from(pixmap.height());
-                let image_bounds = Aabb::new(
-                    Vector2::ZERO,
-                    Vector2::new(pixel_width as f64, pixel_height as f64),
-                );
+                // Lightweight 4-byte valid 1x1 white placeholder so `Image::assert_valid()`
+                // always succeeds without rasterizing hundreds of pages upfront!
+                let placeholder_bounds = Aabb::new(Vector2::ZERO, Vector2::new(1.0, 1.0));
                 let image = Image {
-                    data: glib::Bytes::from(pixmap.data_as_u8_slice()),
-                    rectangle: Rectangle::from_p2d_aabb(image_bounds),
-                    pixel_width,
-                    pixel_height,
+                    data: glib::Bytes::from_static(&PLACEHOLDER_WHITE_RGBA),
+                    rectangle: Rectangle::from_p2d_aabb(placeholder_bounds),
+                    pixel_width: 1,
+                    pixel_height: 1,
                     memory_format: crate::image::ImageMemoryFormat::R8g8b8a8Premultiplied,
                 };
                 let mut transform = DAffine2::IDENTITY;
@@ -267,11 +442,20 @@ impl BitmapImage {
                     affine: transform,
                 };
                 let text_runs = crate::textsearch::extract_text_from_pdf_page(page);
+                let pdf_source = Some(PdfPageSource {
+                    doc_hash,
+                    pdf_bytes: Some(Arc::clone(&data)),
+                    page_index: page_i,
+                    x_scale: base_scale,
+                    y_scale: base_scale,
+                    password: password.clone(),
+                });
 
                 Ok(Self {
                     image,
                     rectangle,
                     text_runs,
+                    pdf_source,
                 })
             })
             .collect()

@@ -34,8 +34,8 @@ static inline NSImage *RnoteRenderDocument(NSString *path, CGSize targetSize) {
     NSDictionary *json = [NSJSONSerialization JSONObjectWithData:decomp options:0 error:nil];
     if (!json) return nil;
 
-    // Check if embedded thumbnail_png is present
-    NSString *embeddedB64 = json[@"thumbnail_png"];
+    // Check if embedded thumbnail_png is present (inside wrapper.data or top-level)
+    NSString *embeddedB64 = json[@"data"][@"thumbnail_png"] ?: json[@"thumbnail_png"];
     if (embeddedB64) {
         NSData *png = [[NSData alloc] initWithBase64EncodedString:embeddedB64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
         if (png) return [[NSImage alloc] initWithData:png];
@@ -46,10 +46,17 @@ static inline NSImage *RnoteRenderDocument(NSString *path, CGSize targetSize) {
     if (!snap) return nil;
 
     NSDictionary *doc = snap[@"document"];
+    NSDictionary *fmt = doc[@"config"][@"format"];
+    double fmtW = [fmt[@"width"] doubleValue];
+    double fmtH = [fmt[@"height"] doubleValue];
     double docW = [doc[@"width"] doubleValue];
     double docH = [doc[@"height"] doubleValue];
-    if (docW <= 0) docW = 794;
-    if (docH <= 0) docH = 1123;
+    if (docW <= 0) docW = fmtW > 0 ? fmtW : 794;
+    if (docH <= 0) docH = fmtH > 0 ? fmtH : 1123;
+    // Clamp fallback height to ~1.5x page height so multi-page legacy documents don't squash
+    if (fmtH > 0 && docH > fmtH * 1.5) {
+        docH = fmtH;
+    }
 
     double scale = 1.0;
     if (targetSize.width > 0 && targetSize.height > 0) {

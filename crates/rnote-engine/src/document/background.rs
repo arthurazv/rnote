@@ -541,7 +541,14 @@ impl Background {
 
     pub(crate) fn gen_tile_image(&self, image_scale: f64) -> Result<Image, anyhow::Error> {
         let tile_bounds = Aabb::new(Vector2::ZERO, self.tile_size());
-        self.gen_svg(tile_bounds, true, false)?
+        // For Cornell notes, the repeating tile only renders the horizontal ruled lines;
+        // the per-page cue margin and summary box are drawn at full page bounds.
+        let mut tile_bg = *self;
+        if tile_bg.pattern == PatternStyle::Cornell {
+            tile_bg.pattern = PatternStyle::Lines;
+        }
+        tile_bg
+            .gen_svg(tile_bounds, true, false)?
             .gen_image(image_scale)
     }
 

@@ -977,7 +977,7 @@ impl RnCanvas {
             if let Some(m) = matches.get(idx) {
                 let center = m.center;
                 drop(matches);
-                let widget_flags = self.engine_mut().camera.set_viewport_center(center);
+                let widget_flags = self.engine_mut().camera_center_at(center);
                 self.emit_handle_widget_flags(widget_flags);
                 self.queue_draw();
             }

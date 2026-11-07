@@ -331,17 +331,65 @@ impl Engine {
             Arc::make_mut(&mut store_history_entry.stroke_components).remove(key);
         }
 
+        let mut pdf_sources = std::collections::BTreeMap::new();
+        for stroke in store_history_entry.stroke_components.values() {
+            if let crate::strokes::Stroke::BitmapImage(b) = stroke.as_ref()
+                && let Some(ref src) = b.pdf_source
+                && let Some(bytes) = src.resolved_bytes()
+            {
+                let key = format!("{:016x}", src.doc_hash);
+                pdf_sources.entry(key).or_insert_with(|| {
+                    base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        bytes.as_slice(),
+                    )
+                });
+            }
+        }
+
         EngineSnapshot {
             document: self.document.extract_snapshot_data(),
             camera: self.camera.extract_snapshot_data(),
             stroke_components: Arc::clone(&store_history_entry.stroke_components),
             chrono_components: Arc::clone(&store_history_entry.chrono_components),
             chrono_counter: store_history_entry.chrono_counter,
+            pdf_sources,
         }
     }
 
     /// Imports an engine snapshot. A save file should always be loaded with this method.
-    pub fn load_snapshot(&mut self, snapshot: EngineSnapshot) -> WidgetFlags {
+    pub fn load_snapshot(&mut self, mut snapshot: EngineSnapshot) -> WidgetFlags {
+        if !snapshot.pdf_sources.is_empty() {
+            let mut decoded_docs = std::collections::HashMap::new();
+            for (hex_hash, b64) in &snapshot.pdf_sources {
+                if let Ok(doc_hash) = u64::from_str_radix(hex_hash, 16)
+                    && let Ok(raw) =
+                        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+                {
+                    let arc_raw = Arc::new(raw);
+                    crate::strokes::bitmapimage::register_pdf_doc_bytes(
+                        doc_hash,
+                        Arc::clone(&arc_raw),
+                    );
+                    decoded_docs.insert(doc_hash, arc_raw);
+                }
+            }
+            if !decoded_docs.is_empty() {
+                for stroke in Arc::make_mut(&mut snapshot.stroke_components).values_mut() {
+                    if matches!(
+                        stroke.as_ref(),
+                        crate::strokes::Stroke::BitmapImage(b) if b.pdf_source.is_some()
+                    ) {
+                        if let crate::strokes::Stroke::BitmapImage(b) = Arc::make_mut(stroke)
+                            && let Some(ref mut src) = b.pdf_source
+                            && let Some(bytes) = decoded_docs.get(&src.doc_hash)
+                        {
+                            src.pdf_bytes = Some(Arc::clone(bytes));
+                        }
+                    }
+                }
+            }
+        }
         self.document = snapshot.document.extract_snapshot_data();
         self.camera = snapshot.camera.extract_snapshot_data();
         let mut widget_flags = self.store.import_from_snapshot(&snapshot)
@@ -692,6 +740,19 @@ impl Engine {
         };
         let y = (page_bounds.mins[1] - Document::SHADOW_WIDTH) * zoom;
         let mut widget_flags = self.camera_set_offset_expand(Vector2::new(x, y));
+        widget_flags |= self.update_rendering_current_viewport();
+        widget_flags.view_modified = true;
+        widget_flags.redraw = true;
+        widget_flags
+    }
+
+    /// Move the camera so that `center` (in document coordinates) is centered in the viewport,
+    /// clamped to surface bounds, and update viewport rendering immediately.
+    pub fn camera_center_at(&mut self, center: Vector2) -> WidgetFlags {
+        let zoom = self.camera.total_zoom();
+        let viewport_size = self.camera.size();
+        let target_offset = center * zoom - viewport_size * 0.5;
+        let mut widget_flags = self.camera_set_offset_expand(target_offset);
         widget_flags |= self.update_rendering_current_viewport();
         widget_flags.view_modified = true;
         widget_flags.redraw = true;

@@ -740,14 +740,15 @@ impl RnAppWindow {
                     Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
                     _ => (self.new_canvas_wrapper(), true),
                 };
-                let canvas = wrapper.canvas();
                 let (bytes, _) = input_file.load_bytes_future().await?;
-                canvas
-                    .load_in_vectorimage_bytes(bytes.to_vec(), target_pos, self.respect_borders())
-                    .await?;
                 if is_new {
                     self.append_wrapper_new_tab(&wrapper);
                 }
+                let canvas = wrapper.canvas();
+                canvas
+                    .load_in_vectorimage_bytes(bytes.to_vec(), target_pos, self.respect_borders())
+                    .await?;
+                canvas.set_unsaved_changes(true);
                 true
             }
             FileType::BitmapImageFile => {
@@ -755,26 +756,21 @@ impl RnAppWindow {
                     Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
                     _ => (self.new_canvas_wrapper(), true),
                 };
-                let canvas = wrapper.canvas();
                 let (bytes, _) = input_file.load_bytes_future().await?;
-                canvas
-                    .load_in_bitmapimage_bytes(bytes.to_vec(), target_pos, self.respect_borders())
-                    .await?;
                 if is_new {
                     self.append_wrapper_new_tab(&wrapper);
                 }
+                let canvas = wrapper.canvas();
+                canvas
+                    .load_in_bitmapimage_bytes(bytes.to_vec(), target_pos, self.respect_borders())
+                    .await?;
+                canvas.set_unsaved_changes(true);
                 true
             }
             FileType::XoppFile => {
-                // a new tab for xopp file import
+                // a new tab for xopp file import (attached inside dialog_import_xopp_w_prefs on confirm)
                 let wrapper = self.new_canvas_wrapper();
-                let canvas = wrapper.canvas();
-                let file_imported =
-                    dialogs::import::dialog_import_xopp_w_prefs(self, &canvas, input_file).await?;
-                if file_imported {
-                    self.append_wrapper_new_tab(&wrapper);
-                }
-                file_imported
+                dialogs::import::dialog_import_xopp_w_prefs(self, &wrapper, input_file).await?
             }
             FileType::PdfFile => {
                 let (wrapper, is_new) = match self.active_tab_wrapper() {
@@ -782,25 +778,28 @@ impl RnAppWindow {
                     _ => (self.new_canvas_wrapper(), true),
                 };
                 let canvas = wrapper.canvas();
-                let file_imported =
-                    dialogs::import::dialog_import_pdf_w_prefs(self, &canvas, input_file, target_pos)
-                        .await?;
-                if file_imported && is_new && !canvas.empty() {
-                    self.append_wrapper_new_tab(&wrapper);
-                }
-                file_imported
+                dialogs::import::dialog_import_pdf_w_prefs(
+                    self,
+                    &canvas,
+                    is_new.then_some(&wrapper),
+                    input_file,
+                    target_pos,
+                )
+                .await?
             }
             FileType::PlaintextFile => {
                 let (wrapper, is_new) = match self.active_tab_wrapper() {
                     Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
                     _ => (self.new_canvas_wrapper(), true),
                 };
-                let canvas = wrapper.canvas();
                 let (bytes, _) = input_file.load_bytes_future().await?;
-                canvas.load_in_text(String::from_utf8(bytes.to_vec())?, target_pos)?;
+                let text = String::from_utf8(bytes.to_vec())?;
                 if is_new {
                     self.append_wrapper_new_tab(&wrapper);
                 }
+                let canvas = wrapper.canvas();
+                canvas.load_in_text(text, target_pos)?;
+                canvas.set_unsaved_changes(true);
                 true
             }
             FileType::Folder => {

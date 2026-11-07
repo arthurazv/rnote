@@ -324,10 +324,42 @@ impl Engine {
     ) -> oneshot::Receiver<anyhow::Result<Vec<u8>>> {
         let (oneshot_sender, oneshot_receiver) = oneshot::channel::<anyhow::Result<Vec<u8>>>();
         let engine_snapshot = self.take_snapshot();
+        let first_page_bounds = self
+            .doc_navigation_pages_bounds()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| self.document.bounds());
+        let first_page_keys = self
+            .store
+            .stroke_keys_as_rendered_intersecting_bounds(first_page_bounds);
+        let preview_content = self
+            .stroke_content_from_sorted_keys(first_page_keys)
+            .with_bounds(first_page_bounds);
+
         rayon::spawn(move || {
             let result = || -> anyhow::Result<Vec<u8>> {
+                let thumbnail_png = {
+                    let page_w = first_page_bounds.extents()[0];
+                    if page_w > 1.0 {
+                        let scale = (560.0 / page_w).clamp(0.1, 1.5);
+                        crate::Image::gen_with_cairo(
+                            |cx| preview_content.draw_to_cairo(cx, true, true, false, 0.0, scale),
+                            first_page_bounds,
+                            scale,
+                        )
+                        .and_then(|img| img.into_encoded_bytes(image::ImageFormat::Png, None))
+                        .ok()
+                        .map(|png| {
+                            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, png)
+                        })
+                    } else {
+                        None
+                    }
+                };
+
                 let rnote_file = RnoteFile {
                     engine_snapshot: ijson::to_value(&engine_snapshot)?,
+                    thumbnail_png,
                 };
                 rnote_file.save_as_bytes(&file_name)
             };

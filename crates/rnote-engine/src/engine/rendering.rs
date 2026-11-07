@@ -294,6 +294,49 @@ impl Engine {
             snapshot.append_node(r);
         }
 
+        if self.document.config.background.pattern
+            == crate::document::background::PatternStyle::Cornell
+        {
+            use p2d::bounding_volume::BoundingVolume;
+            use rnote_compose::SplitOrder;
+            use rnote_compose::ext::AabbExt;
+
+            let total_zoom = self.camera.total_zoom();
+            let sep_width = (1.4 / total_zoom).max(0.8);
+            let viewport = self.camera.viewport();
+            let line_rgba =
+                gdk::RGBA::from_compose_color(self.document.config.background.pattern_color);
+
+            for page_bounds in doc_bounds.split_extended_origin_aligned(
+                self.document.config.format.size(),
+                SplitOrder::default(),
+            ) {
+                if !page_bounds.intersects(&viewport) {
+                    continue;
+                }
+                let cue_x = page_bounds.mins[0] + page_bounds.extents()[0] * 0.28;
+                let summary_y = page_bounds.mins[1] + page_bounds.extents()[1] * 0.82;
+
+                // Vertical cue column divider
+                let cue_rect = graphene::Rect::new(
+                    (cue_x - sep_width * 0.5) as f32,
+                    page_bounds.mins[1] as f32,
+                    sep_width as f32,
+                    (summary_y - page_bounds.mins[1]).max(0.0) as f32,
+                );
+                snapshot.append_node(gsk::ColorNode::new(&line_rgba, &cue_rect).upcast());
+
+                // Horizontal summary divider
+                let summary_rect = graphene::Rect::new(
+                    page_bounds.mins[0] as f32,
+                    (summary_y - sep_width * 0.5) as f32,
+                    page_bounds.extents()[0] as f32,
+                    sep_width as f32,
+                );
+                snapshot.append_node(gsk::ColorNode::new(&line_rgba, &summary_rect).upcast());
+            }
+        }
+
         snapshot.pop();
         Ok(())
     }

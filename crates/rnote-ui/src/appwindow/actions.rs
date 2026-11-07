@@ -420,15 +420,17 @@ impl RnAppWindow {
             self,
             move |_, _| {
                 let wrapper = appwindow.new_canvas_wrapper();
+                appwindow.append_wrapper_new_tab(&wrapper);
                 let canvas = wrapper.canvas();
-                {
+                let widget_flags = {
                     let mut engine = canvas.engine_mut();
                     engine.document.config.background.pattern =
                         rnote_engine::document::background::PatternStyle::Cornell;
                     engine.document.config.background.pattern_size = Vector2::new(32.0, 30.0);
-                    let _ = engine.background_rendering_regenerate();
-                }
-                appwindow.append_wrapper_new_tab(&wrapper);
+                    engine.background_rendering_regenerate()
+                };
+                appwindow.handle_widget_flags(widget_flags, &canvas);
+                appwindow.refresh_ui();
             }
         ));
 
@@ -438,15 +440,17 @@ impl RnAppWindow {
             self,
             move |_, _| {
                 let wrapper = appwindow.new_canvas_wrapper();
+                appwindow.append_wrapper_new_tab(&wrapper);
                 let canvas = wrapper.canvas();
-                {
+                let widget_flags = {
                     let mut engine = canvas.engine_mut();
                     engine.document.config.background.pattern =
                         rnote_engine::document::background::PatternStyle::Lines;
                     engine.document.config.background.pattern_size = Vector2::new(32.0, 26.0);
-                    let _ = engine.background_rendering_regenerate();
-                }
-                appwindow.append_wrapper_new_tab(&wrapper);
+                    engine.background_rendering_regenerate()
+                };
+                appwindow.handle_widget_flags(widget_flags, &canvas);
+                appwindow.refresh_ui();
             }
         ));
 
@@ -456,15 +460,17 @@ impl RnAppWindow {
             self,
             move |_, _| {
                 let wrapper = appwindow.new_canvas_wrapper();
+                appwindow.append_wrapper_new_tab(&wrapper);
                 let canvas = wrapper.canvas();
-                {
+                let widget_flags = {
                     let mut engine = canvas.engine_mut();
                     engine.document.config.background.pattern =
                         rnote_engine::document::background::PatternStyle::Grid;
                     engine.document.config.background.pattern_size = Vector2::new(24.0, 24.0);
-                    let _ = engine.background_rendering_regenerate();
-                }
-                appwindow.append_wrapper_new_tab(&wrapper);
+                    engine.background_rendering_regenerate()
+                };
+                appwindow.handle_widget_flags(widget_flags, &canvas);
+                appwindow.refresh_ui();
             }
         ));
 

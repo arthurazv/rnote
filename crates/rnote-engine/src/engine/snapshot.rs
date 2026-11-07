@@ -32,6 +32,12 @@ pub struct EngineSnapshot {
     pub chrono_components: Arc<SecondaryMap<StrokeKey, Arc<ChronoComponent>>>,
     #[serde(rename = "chrono_counter")]
     pub chrono_counter: u32,
+    #[serde(
+        default,
+        skip_serializing_if = "std::collections::BTreeMap::is_empty",
+        rename = "pdf_sources"
+    )]
+    pub pdf_sources: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for EngineSnapshot {
@@ -42,6 +48,7 @@ impl Default for EngineSnapshot {
             stroke_components: Arc::new(SlotMap::with_key()),
             chrono_components: Arc::new(SecondaryMap::new()),
             chrono_counter: 0,
+            pdf_sources: std::collections::BTreeMap::new(),
         }
     }
 }

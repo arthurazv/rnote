@@ -85,33 +85,75 @@ impl SnippetTool {
                     let keys = engine_view
                         .store
                         .stroke_keys_as_rendered_intersecting_bounds(bounds);
-                    let stroke_content = engine_view
-                        .store
-                        .fetch_stroke_content(&keys)
-                        .with_background(engine_view.document.config.background)
-                        .with_bounds(bounds);
+                    if !keys.is_empty() {
+                        let stroke_content = engine_view
+                            .store
+                            .fetch_stroke_content(&keys)
+                            .with_background(engine_view.document.config.background)
+                            .with_bounds(bounds);
 
-                    let is_cut = modifier_keys.contains(&ModifierKey::KeyboardShift);
-                    let image_scale = 2.0;
+                        let is_cut = modifier_keys.contains(&ModifierKey::KeyboardShift);
+                        let image_scale = 2.0;
 
-                    if let Ok(Some(svg)) = stroke_content.gen_svg(true, false, false, 0.0) {
-                        if let Ok(image) = svg.gen_image(image_scale) {
-                            if let Ok(png_bytes) =
-                                image.into_encoded_bytes(image::ImageFormat::Png, None)
+                        if let Ok(cropped_image) = crate::Image::gen_with_cairo(
+                            |cairo_cx| {
+                                stroke_content.draw_to_cairo(
+                                    cairo_cx,
+                                    true,
+                                    false,
+                                    false,
+                                    0.0,
+                                    image_scale,
+                                )
+                            },
+                            bounds,
+                            image_scale,
+                        ) {
+                            if let Ok(png_bytes) = cropped_image
+                                .clone()
+                                .into_encoded_bytes(image::ImageFormat::Png, None)
                             {
                                 let mut clipboard_content = Vec::new();
-                                if let Ok(json) = serde_json::to_string(&stroke_content) {
+
+                                // Build a cropped BitmapImage stroke at exact 1:1 document bounds
+                                // with 2x Retina pixel density so pasting inside Rnote (⌘V) pastes
+                                // ONLY the cropped region rather than the entire uncropped PDF page!
+                                let logical_size = bounds.extents();
+                                let affine =
+                                    p2d::glamx::DAffine2::from_translation(logical_size * 0.5);
+                                let cropped_bitmap = crate::strokes::BitmapImage {
+                                    image: cropped_image,
+                                    rectangle: rnote_compose::shapes::Rectangle {
+                                        cuboid: p2d::shape::Cuboid::new(logical_size * 0.5),
+                                        affine,
+                                    },
+                                    text_runs: Vec::new(),
+                                    pdf_source: None,
+                                };
+                                let cropped_stroke_content = StrokeContent::default()
+                                    .with_strokes(vec![crate::engine::strokecontent::LayeredStroke {
+                                        stroke: std::sync::Arc::new(
+                                            crate::strokes::Stroke::BitmapImage(cropped_bitmap),
+                                        ),
+                                        layer: crate::store::chrono_comp::StrokeLayer::UserLayer(0),
+                                    }])
+                                    .with_bounds(Aabb::new(Vector2::ZERO, logical_size));
+
+                                if let Ok(json) = serde_json::to_string(&cropped_stroke_content) {
                                     clipboard_content.push((
                                         json.into_bytes(),
                                         StrokeContent::MIME_TYPE.to_string(),
                                     ));
                                 }
-                                clipboard_content.push((
-                                    svg.to_document().into_bytes(),
-                                    Svg::MIME_TYPE.to_string(),
-                                ));
-                                clipboard_content
-                                    .push((png_bytes, "image/png".to_string()));
+                                if let Ok(Some(svg)) =
+                                    stroke_content.gen_svg(true, false, false, 0.0)
+                                {
+                                    clipboard_content.push((
+                                        svg.to_document().into_bytes(),
+                                        Svg::MIME_TYPE.to_string(),
+                                    ));
+                                }
+                                clipboard_content.push((png_bytes, "image/png".to_string()));
 
                                 widget_flags.clipboard_content = Some(clipboard_content);
 
@@ -119,7 +161,9 @@ impl SnippetTool {
                                     let trash_keys = keys
                                         .into_iter()
                                         .filter(|&k| {
-                                            if let Some(stroke) = engine_view.store.get_stroke_arc(k) {
+                                            if let Some(stroke) =
+                                                engine_view.store.get_stroke_arc(k)
+                                            {
                                                 bounds.contains(&stroke.bounds())
                                             } else {
                                                 false
