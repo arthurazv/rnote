@@ -155,6 +155,46 @@ impl SnippetTool {
                                 }
                                 clipboard_content.push((png_bytes, "image/png".to_string()));
 
+                                // Extract any text embedded inside the cropped bounds (e.g. from PDFs or TextStrokes)
+                                // and place it on the clipboard as "text/plain" so users can paste clean text into any app!
+                                let mut extracted_text_pieces = Vec::new();
+                                for &k in &keys {
+                                    if let Some(stroke) = engine_view.store.get_stroke_arc(k) {
+                                        match &*stroke {
+                                            crate::strokes::Stroke::BitmapImage(b) => {
+                                                for run in &b.text_runs {
+                                                    let run_bounds = crate::textsearch::text_run_to_doc_bounds(&run.bbox, &b.rectangle);
+                                                    if bounds.intersects(&run_bounds) {
+                                                        extracted_text_pieces.push(run.text.clone());
+                                                    }
+                                                }
+                                            }
+                                            crate::strokes::Stroke::VectorImage(v) => {
+                                                for run in &v.text_runs {
+                                                    let run_bounds = crate::textsearch::text_run_to_doc_bounds(&run.bbox, &v.rectangle);
+                                                    if bounds.intersects(&run_bounds) {
+                                                        extracted_text_pieces.push(run.text.clone());
+                                                    }
+                                                }
+                                            }
+                                            crate::strokes::Stroke::TextStroke(t) => {
+                                                if bounds.intersects(&t.bounds()) {
+                                                    extracted_text_pieces.push(t.text.clone());
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+
+                                if !extracted_text_pieces.is_empty() {
+                                    let joined_text = extracted_text_pieces.join(" ");
+                                    clipboard_content.push((
+                                        joined_text.into_bytes(),
+                                        "text/plain".to_string(),
+                                    ));
+                                }
+
                                 widget_flags.clipboard_content = Some(clipboard_content);
 
                                 if is_cut {
@@ -180,10 +220,17 @@ impl SnippetTool {
                                         "Trecho recortado e copiado! Cole com ⌘V".to_string(),
                                     );
                                 } else {
-                                    widget_flags.clipboard_toast = Some(
-                                        "Trecho copiado para a área de transferência! Cole com ⌘V"
-                                            .to_string(),
-                                    );
+                                    if !extracted_text_pieces.is_empty() {
+                                        let count = extracted_text_pieces.len();
+                                        widget_flags.clipboard_toast = Some(
+                                            format!("Trecho copiado (imagem + {count} palavras)! Cole com ⌘V"),
+                                        );
+                                    } else {
+                                        widget_flags.clipboard_toast = Some(
+                                            "Trecho copiado para a área de transferência! Cole com ⌘V"
+                                                .to_string(),
+                                        );
+                                    }
                                 }
                             }
                         }

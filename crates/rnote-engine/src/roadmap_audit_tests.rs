@@ -230,6 +230,17 @@ mod tests {
             .expect("Clipboard must include image/png");
         assert!(!png_entry.0.is_empty());
 
+        let text_entry = clipboard
+            .iter()
+            .find(|(_, mime)| mime == "text/plain");
+        if let Some((text_bytes, _)) = text_entry {
+            let extracted = String::from_utf8_lossy(text_bytes);
+            assert!(
+                extracted.contains("Importante"),
+                "Extracted text from cropped PDF region must contain 'Importante', found: {extracted}"
+            );
+        }
+
         let pasted_content: StrokeContent =
             serde_json::from_slice(&stroke_json_entry.0).expect("Valid StrokeContent JSON");
         assert_eq!(pasted_content.strokes.len(), 1);
