@@ -47,7 +47,7 @@
         <child>
           <object class="GtkToggleButton" id="selectorstyle_text_toggle">
             <property name="group">selectorstyle_polygon_toggle</property>
-            <property name="tooltip_text" translatable="yes">Selecionar Texto (PDF / Documento)</property>
+            <property name="tooltip_text" translatable="yes">Select Text</property>
             <property name="icon-name">pen-text-select-symbolic</property>
           </object>
         </child>

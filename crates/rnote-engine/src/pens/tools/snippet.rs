@@ -167,15 +167,13 @@ impl SnippetTool {
                                 widget_flags.clipboard_content = Some(clipboard_content);
 
                                 if !extracted_text_pieces.is_empty() {
-                                    let count = extracted_text_pieces.len();
                                     let preview: String = extracted_text_pieces.join(" ").chars().take(35).collect();
                                     widget_flags.clipboard_toast = Some(
-                                        format!("Texto copiado ({count} palavras): \"{preview}...\""),
+                                        format!("Text copied: \"{preview}...\""),
                                     );
                                 } else {
                                     widget_flags.clipboard_toast = Some(
-                                        "Trecho copiado para a área de transferência! Cole com ⌘V"
-                                            .to_string(),
+                                        "Snippet copied to clipboard".to_string(),
                                     );
                                 }
                             }

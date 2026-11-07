@@ -852,4 +852,40 @@ impl StrokeStore {
             .map(|(w, _)| w)
             .collect()
     }
+
+    /// Merges adjacent word bounding boxes on the same line into contiguous spans.
+    /// This drastically reduces Cairo draw calls and eliminates alpha-overlap artifacts.
+    pub fn merge_word_boxes_into_line_spans(mut boxes: Vec<Aabb>) -> Vec<Aabb> {
+        if boxes.is_empty() {
+            return boxes;
+        }
+        boxes.sort_by(|a, b| {
+            let y_diff = (a.mins[1] - b.mins[1]).abs();
+            if y_diff > 8.0 {
+                a.mins[1].total_cmp(&b.mins[1])
+            } else {
+                a.mins[0].total_cmp(&b.mins[0])
+            }
+        });
+
+        let mut merged: Vec<Aabb> = Vec::with_capacity(boxes.len());
+        let mut current = boxes[0];
+
+        for b in boxes.into_iter().skip(1) {
+            let same_line = (b.mins[1] - current.mins[1]).abs() < 8.0
+                && (b.maxs[1] - current.maxs[1]).abs() < 8.0;
+            let adjacent = b.mins[0] <= current.maxs[0] + 18.0;
+
+            if same_line && adjacent {
+                current.maxs[0] = current.maxs[0].max(b.maxs[0]);
+                current.mins[1] = current.mins[1].min(b.mins[1]);
+                current.maxs[1] = current.maxs[1].max(b.maxs[1]);
+            } else {
+                merged.push(current);
+                current = b;
+            }
+        }
+        merged.push(current);
+        merged
+    }
 }

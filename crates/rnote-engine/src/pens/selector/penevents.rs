@@ -435,8 +435,8 @@ impl Selector {
                         let runs = engine_view.store.extract_text_runs_in_bounds(aabb);
                         if !runs.is_empty() {
                             let text = runs.iter().map(|(w, _)| w.as_str()).collect::<Vec<_>>().join(" ");
-                            let word_boxes: Vec<Aabb> = runs.into_iter().map(|(_, b)| b).collect();
-                            let count = word_boxes.len();
+                            let raw_boxes: Vec<Aabb> = runs.into_iter().map(|(_, b)| b).collect();
+                            let word_boxes = crate::store::StrokeStore::merge_word_boxes_into_line_spans(raw_boxes);
                             let preview: String = text.chars().take(35).collect();
 
                             let mut combined_bounds = aabb;
@@ -453,12 +453,12 @@ impl Selector {
                                 (text.into_bytes(), "text/plain".to_string()),
                             ]);
                             widget_flags.clipboard_toast = Some(format!(
-                                "Texto copiado ({count} palavras): \"{preview}...\"! Cole com ⌘V"
+                                "Text copied: \"{preview}...\""
                             ));
                             progress = PenProgress::Finished;
                         } else {
                             self.state = SelectorState::Idle;
-                            widget_flags.clipboard_toast = Some(String::from("Nenhum texto encontrado na seleção"));
+                            widget_flags.clipboard_toast = Some(String::from("No text found in selection"));
                             progress = PenProgress::Finished;
                         }
                     } else {
@@ -552,45 +552,6 @@ impl Selector {
                     widget_flags.deselect_color_setters = true;
 
                     progress = PenProgress::InProgress;
-                } else {
-                    // Check if the user selected a region containing PDF / embedded text
-                    let text_bounds = match engine_view.config.pens_config.selector_config.style {
-                        SelectorStyle::Rectangle => {
-                            if let (Some(first), Some(last)) = (path.first(), path.last()) {
-                                Some(Aabb::new_positive(first.pos, last.pos))
-                            } else {
-                                None
-                            }
-                        }
-                        SelectorStyle::Polygon | SelectorStyle::IntersectingPath => {
-                            if path.len() >= 3 {
-                                let mut b = Aabb::new_invalid();
-                                for p in path.iter() {
-                                    b.take_point(p.pos);
-                                }
-                                Some(b)
-                            } else {
-                                None
-                            }
-                        }
-                        _ => None,
-                    };
-
-                    if let Some(tb) = text_bounds {
-                        let words = engine_view.store.extract_text_in_bounds(tb);
-                        if !words.is_empty() {
-                            let text = words.join(" ");
-                            let count = words.len();
-                            let preview: String = text.chars().take(35).collect();
-                            widget_flags.clipboard_content = Some(vec![
-                                (text.into_bytes(), "text/plain".to_string()),
-                            ]);
-                            widget_flags.clipboard_toast = Some(format!(
-                                "Texto copiado ({count} palavras): \"{preview}...\"! Cole com ⌘V"
-                            ));
-                            progress = PenProgress::Finished;
-                        }
-                    }
                 }
 
                 widget_flags |= self.update_state(engine_view);

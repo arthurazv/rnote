@@ -402,13 +402,15 @@ impl RnAppWindow {
             if let Err(e) = self.clipboard().set_content(Some(&gdk_content_provider)) {
                 error!("Failed to set clipboard content from widget flags: {e:?}");
             } else {
-                let toast_text = widget_flags
+                let raw_toast = widget_flags
                     .clipboard_toast
-                    .unwrap_or_else(|| gettext("Snippet copied to clipboard! Paste with ⌘V"));
-                self.overlays().dispatch_toast_text(&toast_text, Some(std::time::Duration::from_secs(2)));
+                    .unwrap_or_else(|| String::from("Snippet copied to clipboard! Paste with ⌘V"));
+                let localized = Self::localize_toast(&raw_toast);
+                self.overlays().dispatch_toast_text(&localized, Some(std::time::Duration::from_secs(2)));
             }
-        } else if let Some(ref toast_text) = widget_flags.clipboard_toast {
-            self.overlays().dispatch_toast_text(toast_text, Some(std::time::Duration::from_secs(2)));
+        } else if let Some(ref raw_toast) = widget_flags.clipboard_toast {
+            let localized = Self::localize_toast(raw_toast);
+            self.overlays().dispatch_toast_text(&localized, Some(std::time::Duration::from_secs(2)));
         }
 
         // Keep the pages navigator in sync with the active canvas.
@@ -423,6 +425,20 @@ impl RnAppWindow {
             if widget_flags.view_modified || widget_flags.zoomed || widget_flags.resize {
                 pagesnavigator.queue_update_current_page();
             }
+        }
+    }
+
+    fn localize_toast(text: &str) -> String {
+        if text == "No text found in selection" {
+            gettext("No text found in selection")
+        } else if text == "Snippet copied to clipboard" {
+            gettext("Snippet copied to clipboard")
+        } else if text == "Snippet copied to clipboard! Paste with ⌘V" {
+            gettext("Snippet copied to clipboard! Paste with ⌘V")
+        } else if let Some(preview) = text.strip_prefix("Text copied: ") {
+            format!("{}: {preview}", gettext("Text copied"))
+        } else {
+            text.to_string()
         }
     }
 

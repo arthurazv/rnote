@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_snippet_crop_tool_pastes_cropped_region_not_full_page() {
-        let pdf_bytes = build_sample_multipage_pdf(&["Trecho Importante Para Recortar"]);
+        let pdf_bytes = build_sample_multipage_pdf(&["Important Snippet Region To Crop"]);
         let format = Format::default();
         let prefs = PdfImportPrefs {
             pages_type: PdfImportPagesType::Bitmap,
@@ -430,5 +430,28 @@ mod tests {
 
         // Verify no strokes were selected for movement/transformation
         assert!(engine.store.selection_keys_as_rendered().is_empty(), "No strokes should be selected for modification");
+    }
+
+    #[test]
+    fn test_merge_word_boxes_into_line_spans() {
+        use p2d::bounding_volume::Aabb;
+        use p2d::math::Vector2;
+        use crate::store::StrokeStore;
+
+        // Line 1: 3 words
+        let w1 = Aabb::new(Vector2::new(10.0, 20.0), Vector2::new(50.0, 35.0));
+        let w2 = Aabb::new(Vector2::new(55.0, 20.0), Vector2::new(95.0, 35.0));
+        let w3 = Aabb::new(Vector2::new(100.0, 20.0), Vector2::new(140.0, 35.0));
+
+        // Line 2: 2 words
+        let w4 = Aabb::new(Vector2::new(10.0, 45.0), Vector2::new(60.0, 60.0));
+        let w5 = Aabb::new(Vector2::new(65.0, 45.0), Vector2::new(115.0, 60.0));
+
+        let merged = StrokeStore::merge_word_boxes_into_line_spans(vec![w1, w2, w3, w4, w5]);
+        assert_eq!(merged.len(), 2, "5 words across 2 lines should merge into exactly 2 line spans");
+        assert_eq!(merged[0].mins, Vector2::new(10.0, 20.0));
+        assert_eq!(merged[0].maxs, Vector2::new(140.0, 35.0));
+        assert_eq!(merged[1].mins, Vector2::new(10.0, 45.0));
+        assert_eq!(merged[1].maxs, Vector2::new(115.0, 60.0));
     }
 }

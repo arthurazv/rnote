@@ -3237,3 +3237,21 @@ msgstr "branco"
 #~ msgstr ""
 #~ "Criar um novo documento apaga qualquer alterações não salvas. Você tem "
 #~ "certeza disso?"
+
+msgid "Text Selector"
+msgstr "Seletor de Texto"
+
+msgid "Select Text"
+msgstr "Selecionar Texto"
+
+msgid "Text copied"
+msgstr "Texto copiado"
+
+msgid "No text found in selection"
+msgstr "Nenhum texto encontrado na seleção"
+
+msgid "Snippet copied to clipboard"
+msgstr "Recorte copiado para a área de transferência"
+
+msgid "Snippet copied to clipboard! Paste with ⌘V"
+msgstr "Recorte copiado para a área de transferência! Cole com ⌘V"

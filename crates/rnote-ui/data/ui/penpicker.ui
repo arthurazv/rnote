@@ -25,7 +25,7 @@
         <child>
           <object class="GtkToggleButton" id="highlighter_toggle">
             <property name="icon_name">pen-brush-style-marker-symbolic</property>
-            <property name="tooltip_text" translatable="yes">Highlighter (⇧⌘H)</property>
+            <property name="tooltip_text" translatable="yes">Highlighter</property>
             <property name="hexpand">true</property>
             <property name="group">brush_toggle</property>
             <style>
@@ -58,7 +58,7 @@
         <child>
           <object class="GtkToggleButton" id="text_selector_toggle">
             <property name="icon_name">pen-text-select-symbolic</property>
-            <property name="tooltip_text" translatable="yes">Selecionar Texto (PDF / Documento)</property>
+            <property name="tooltip_text" translatable="yes">Text Selector</property>
             <property name="hexpand">true</property>
             <property name="group">brush_toggle</property>
             <style>

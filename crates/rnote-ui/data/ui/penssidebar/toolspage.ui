@@ -91,7 +91,7 @@
         </child>
         <child>
           <object class="GtkToggleButton" id="toolstyle_snippet_toggle">
-            <property name="tooltip_text" translatable="yes">Snippet / Crop (Drag to copy, Shift+Drag to cut)</property>
+            <property name="tooltip_text" translatable="yes">Snippet</property>
             <property name="group">toolstyle_verticalspace_toggle</property>
             <property name="icon-name">edit-cut-symbolic</property>
             <style>

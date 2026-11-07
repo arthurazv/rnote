@@ -230,7 +230,7 @@ impl PenBehaviour for Selector {
                 }
                 if let Some(ref text) = extracted_text {
                     let preview: String = text.chars().take(35).collect();
-                    widget_flags.clipboard_toast = Some(format!("Texto copiado: \"{preview}...\""));
+                    widget_flags.clipboard_toast = Some(format!("Text copied: \"{preview}...\""));
                 }
                 Ok((clipboard_content, widget_flags))
             };
@@ -309,7 +309,7 @@ impl PenBehaviour for Selector {
                 }
                 if let Some(ref text) = extracted_text {
                     let preview: String = text.chars().take(35).collect();
-                    widget_flags.clipboard_toast = Some(format!("Texto copiado: \"{preview}...\""));
+                    widget_flags.clipboard_toast = Some(format!("Text copied: \"{preview}...\""));
                 }
                 Ok((clipboard_content, widget_flags))
             };
