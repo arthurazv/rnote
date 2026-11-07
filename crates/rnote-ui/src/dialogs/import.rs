@@ -82,8 +82,13 @@ pub(crate) fn default_initial_folder(appwindow: &RnAppWindow) -> gio::File {
     gio::File::for_path(glib::home_dir())
 }
 
-/// Opens a new rnote save file in a new tab
+/// Opens a new rnote save file in a new tab (or new window)
 pub(crate) async fn filedialog_open_doc(appwindow: &RnAppWindow) {
+    filedialog_open_doc_in_target(appwindow, false).await;
+}
+
+/// Opens a file in the current window or a new window
+pub(crate) async fn filedialog_open_doc_in_target(appwindow: &RnAppWindow, new_window: bool) {
     let filter = FileFilter::new();
     // note : mimetypes are not supported with the native file picker on windows
     // See the limitations on FileChooserNative
@@ -102,8 +107,14 @@ pub(crate) async fn filedialog_open_doc(appwindow: &RnAppWindow) {
     filter_list.append(&all_supported_filter);
     filter_list.append(&filter);
 
+    let title = if new_window {
+        gettext("Open File in New Window")
+    } else {
+        gettext("Open File")
+    };
+
     let filedialog = FileDialog::builder()
-        .title(gettext("Open File"))
+        .title(title)
         .modal(true)
         .accept_label(gettext("Open"))
         .filters(&filter_list)
@@ -114,9 +125,17 @@ pub(crate) async fn filedialog_open_doc(appwindow: &RnAppWindow) {
 
     match filedialog.open_future(Some(appwindow)).await {
         Ok(selected_file) => {
-            appwindow
-                .open_file_w_dialogs(selected_file, None, true)
-                .await;
+            if new_window {
+                if let Some(rn_app_out) = appwindow.application() {
+                    let rnapp = rn_app_out.downcast::<crate::RnApp>().unwrap();
+                    let target_win = rnapp.new_appwindow_init_show();
+                    target_win.open_file_w_dialogs(selected_file, None, false).await;
+                }
+            } else {
+                appwindow
+                    .open_file_w_dialogs(selected_file, None, true)
+                    .await;
+            }
         }
         Err(e) => {
             debug!("Did not open document (Error or dialog dismissed by user), Err: {e:?}");
@@ -395,6 +414,13 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     pdf_import_bitmap_scalefactor_row.set_value(pdf_import_prefs.bitmap_scalefactor);
     pdf_import_adjust_document_row.set_active(pdf_import_prefs.adjust_document);
 
+    // Destination: 0 = New Tab, 1 = Current Document, 2 = Each Page in a New Tab, 3 = New Window
+    if pending_new_wrapper.is_none() && !canvas.empty() {
+        pdf_import_destination_row.set_selected(1); // Default to Current Document when dragging/importing into active note
+    } else {
+        pdf_import_destination_row.set_selected(0); // Default to New Tab
+    }
+
     // If importing onto an existing non-empty canvas (e.g. drag-and-drop onto notes), default format to Custom / Current
     if !canvas.empty() && pending_new_wrapper.is_none() {
         pdf_import_page_format_row.set_selected(2);
@@ -612,7 +638,104 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                     .pdf_import_prefs;
 
                 let import_res: anyhow::Result<()> = async {
-                    if destination == 1 {
+                    // destination:
+                    // 0 = New Tab
+                    // 1 = Current Document
+                    // 2 = Each Page in a New Tab
+                    // 3 = New Window
+                    if destination == 3 {
+                        // Import in a Brand New Window
+                        let rn_app_out = appwindow
+                            .application()
+                            .ok_or_else(|| anyhow!("No application instance"))?;
+                        let rnapp = rn_app_out.downcast::<crate::RnApp>().unwrap();
+                        let target_appwindow = rnapp.new_appwindow_init_show();
+                        let target_canvas = target_appwindow
+                            .active_tab_canvas()
+                            .ok_or_else(|| anyhow!("Target window has no active canvas"))?;
+
+                        let first_dims = page_range
+                            .clone()
+                            .find_map(|idx| all_page_dims.get(idx).copied());
+
+                        let effective_pos = match page_format {
+                            0 => {
+                                target_appwindow
+                                    .engine_config()
+                                    .write()
+                                    .import_prefs
+                                    .pdf_import_prefs
+                                    .adjust_document = true;
+                                Some(Vector2::ZERO)
+                            }
+                            1 => {
+                                let is_landscape = first_dims
+                                    .map(|(pw, ph)| pw > ph)
+                                    .unwrap_or(false);
+                                let (w_mm, h_mm) = if is_landscape {
+                                    (297.0, 210.0)
+                                } else {
+                                    (210.0, 297.0)
+                                };
+                                let (w_px, h_px) = {
+                                    let mut engine = target_canvas.engine_mut();
+                                    let dpi = engine.document.config.format.dpi();
+                                    let w_px = (w_mm
+                                        / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH)
+                                        * dpi;
+                                    let h_px = (h_mm
+                                        / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH)
+                                        * dpi;
+                                    engine.document.config.format.set_width(w_px);
+                                    engine.document.config.format.set_height(h_px);
+                                    let _ = engine.set_doc_layout(
+                                        rnote_engine::document::Layout::FixedSize,
+                                    );
+                                    (w_px, h_px)
+                                };
+                                let fit_perc = if let Some((pw, ph)) = first_dims
+                                    && pw > 0.0
+                                    && ph > 0.0
+                                {
+                                    let scaled_h = (ph as f64) * (w_px / pw as f64);
+                                    ((h_px / scaled_h).min(1.0) * 100.0).clamp(10.0, 100.0)
+                                } else {
+                                    100.0
+                                };
+                                {
+                                    let mut cfg = target_appwindow.engine_config().write();
+                                    cfg.import_prefs.pdf_import_prefs.adjust_document = false;
+                                    cfg.import_prefs.pdf_import_prefs.page_width_perc = fit_perc;
+                                    cfg.import_prefs.pdf_import_prefs.page_spacing =
+                                        PdfImportPageSpacing::OnePerDocumentPage;
+                                }
+                                Some(Vector2::ZERO)
+                            }
+                            _ => target_pos,
+                        };
+
+                        target_canvas
+                            .load_in_pdf_bytes(
+                                &target_appwindow,
+                                Arc::unwrap_or_clone(pdf_data),
+                                effective_pos,
+                                Some(page_range),
+                                password,
+                            )
+                            .await?;
+
+                        if page_format == 1 && target_pos.is_none() {
+                            let flags = target_canvas.engine_mut().deselect_all_strokes()
+                                | target_canvas
+                                    .engine_mut()
+                                    .change_pen_style(rnote_engine::pens::PenStyle::Brush);
+                            target_appwindow.handle_widget_flags(flags, &target_canvas);
+                        }
+
+                        if let Some(tp) = target_appwindow.active_tab_page() {
+                            tp.set_title(&file_name);
+                        }
+                    } else if destination == 2 {
                         // Each Page in a New Tab
                         let pdf_data_vec = Arc::unwrap_or_clone(pdf_data);
                         let mut reuse_empty_active = pending_new_wrapper.is_none()
@@ -724,12 +847,22 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                             tab_page.set_title(&format!("{file_name} - {}", page_idx + 1));
                         }
                     } else {
-                        // Single Document in target canvas
-                        let tab_page_opt = if let Some(wrapper) = pending_new_wrapper {
-                            // Attach new tab BEFORE loading so widget_flags and Retina scale_factor apply!
-                            Some(appwindow.append_wrapper_new_tab(wrapper))
+                        // destination 0 (New Tab) or 1 (Current Document)
+                        let (target_canvas, tab_page_opt) = if destination == 1 {
+                            // Current Document: load into existing canvas directly
+                            (canvas.clone(), None)
                         } else {
-                            None
+                            // New Tab: reuse pending_new_wrapper or create a new wrapper tab
+                            if let Some(wrapper) = pending_new_wrapper {
+                                let tp = appwindow.append_wrapper_new_tab(wrapper);
+                                (wrapper.canvas(), Some(tp))
+                            } else if canvas.empty() && canvas.output_file().is_none() {
+                                (canvas.clone(), appwindow.active_tab_page())
+                            } else {
+                                let wrapper = appwindow.new_canvas_wrapper();
+                                let tp = appwindow.append_wrapper_new_tab(&wrapper);
+                                (wrapper.canvas(), Some(tp))
+                            }
                         };
 
                         let first_dims = page_range
@@ -737,7 +870,7 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                             .find_map(|idx| all_page_dims.get(idx).copied());
 
                         let effective_pos = match page_format {
-                            0 if canvas.empty() => {
+                            0 if target_canvas.empty() => {
                                 // Original Size on a fresh document: adjust format & layout to match PDF pages
                                 appwindow
                                     .engine_config()
@@ -758,7 +891,7 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                                     (210.0, 297.0)
                                 };
                                 let (w_px, h_px) = {
-                                    let mut engine = canvas.engine_mut();
+                                    let mut engine = target_canvas.engine_mut();
                                     let dpi = engine.document.config.format.dpi();
                                     let w_px = (w_mm
                                         / rnote_engine::document::format::MeasureUnit::AMOUNT_MM_IN_INCH)
@@ -768,7 +901,7 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                                         * dpi;
                                     engine.document.config.format.set_width(w_px);
                                     engine.document.config.format.set_height(h_px);
-                                    if canvas.empty() {
+                                    if target_canvas.empty() {
                                         let _ = engine.set_doc_layout(
                                             rnote_engine::document::Layout::FixedSize,
                                         );
@@ -788,12 +921,12 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                                     let mut cfg = appwindow.engine_config().write();
                                     cfg.import_prefs.pdf_import_prefs.adjust_document = false;
                                     cfg.import_prefs.pdf_import_prefs.page_width_perc = fit_perc;
-                                    if canvas.empty() {
+                                    if target_canvas.empty() {
                                         cfg.import_prefs.pdf_import_prefs.page_spacing =
                                             PdfImportPageSpacing::OnePerDocumentPage;
                                     }
                                 }
-                                if canvas.empty() {
+                                if target_canvas.empty() {
                                     Some(Vector2::ZERO)
                                 } else {
                                     target_pos
@@ -802,7 +935,7 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                             _ => target_pos,
                         };
 
-                        canvas
+                        target_canvas
                             .load_in_pdf_bytes(
                                 appwindow,
                                 Arc::unwrap_or_clone(pdf_data),
@@ -813,11 +946,11 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
                             .await?;
 
                         if page_format == 1 && target_pos.is_none() {
-                            let flags = canvas.engine_mut().deselect_all_strokes()
-                                | canvas
+                            let flags = target_canvas.engine_mut().deselect_all_strokes()
+                                | target_canvas
                                     .engine_mut()
                                     .change_pen_style(rnote_engine::pens::PenStyle::Brush);
-                            appwindow.handle_widget_flags(flags, canvas);
+                            appwindow.handle_widget_flags(flags, &target_canvas);
                         }
 
                         if let Some(tp) = tab_page_opt {

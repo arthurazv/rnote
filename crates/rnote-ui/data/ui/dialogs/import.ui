@@ -103,12 +103,14 @@
                     <child>
                       <object class="AdwComboRow" id="pdf_import_destination_row">
                         <property name="title" translatable="yes">Destination</property>
-                        <property name="subtitle" translatable="yes">Import into a single document or each page in a separate tab</property>
+                        <property name="subtitle" translatable="yes">Choose target: Current document, New tab, Each page as tab, or New window</property>
                         <property name="model">
                           <object class="GtkStringList">
                             <items>
-                              <item translatable="yes">Single Document</item>
+                              <item translatable="yes">New Tab</item>
+                              <item translatable="yes">Current Document</item>
                               <item translatable="yes">Each Page in a New Tab</item>
+                              <item translatable="yes">New Window</item>
                             </items>
                           </object>
                         </property>

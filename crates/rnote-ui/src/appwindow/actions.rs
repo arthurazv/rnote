@@ -117,6 +117,8 @@ impl RnAppWindow {
         self.add_action(&action_print_doc);
         let action_import_file = gio::SimpleAction::new("import-file", None);
         self.add_action(&action_import_file);
+        let action_open_doc_new_window = gio::SimpleAction::new("open-doc-new-window", None);
+        self.add_action(&action_open_doc_new_window);
         let action_export_doc = gio::SimpleAction::new("export-doc", None);
         self.add_action(&action_export_doc);
         let action_export_doc_pages = gio::SimpleAction::new("export-doc-pages", None);
@@ -1031,7 +1033,7 @@ impl RnAppWindow {
 
         // Open doc
         action_open_doc.connect_activate(clone!(
-            #[weak(rename_to=appwindow)]
+            #[weak(rename_to = appwindow)]
             self,
             move |_, _| {
                 glib::spawn_future_local(clone!(
@@ -1039,6 +1041,21 @@ impl RnAppWindow {
                     appwindow,
                     async move {
                         dialogs::import::filedialog_open_doc(&appwindow).await;
+                    }
+                ));
+            }
+        ));
+
+        // Open doc in new window
+        action_open_doc_new_window.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                glib::spawn_future_local(clone!(
+                    #[weak]
+                    appwindow,
+                    async move {
+                        dialogs::import::filedialog_open_doc_in_target(&appwindow, true).await;
                     }
                 ));
             }

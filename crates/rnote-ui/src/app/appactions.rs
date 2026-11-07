@@ -69,6 +69,7 @@ impl RnApp {
         {
             self.set_accels_for_action("app.quit", &["<Meta>q", "<Primary>q", "<Ctrl>q"]);
             self.set_accels_for_action("app.new-window", &["<Meta>n", "<Primary>n", "<Ctrl>n"]);
+            self.set_accels_for_action("win.open-doc-new-window", &["<Meta><Shift>o", "<Primary><Shift>o"]);
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -87,6 +88,7 @@ impl RnApp {
         file_new_open.append(Some("New Tab"), Some("win.new-tab"));
         file_new_open.append(Some("New Window"), Some("app.new-window"));
         file_new_open.append(Some("Open…"), Some("win.open-doc"));
+        file_new_open.append(Some("Open in New Window…"), Some("win.open-doc-new-window"));
         file_menu.append_section(None, &file_new_open);
 
         let file_import_export = gio::Menu::new();
