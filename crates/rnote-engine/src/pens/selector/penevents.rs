@@ -89,7 +89,9 @@ impl Selector {
                                 engine_view.camera.viewport(),
                                 element.pos,
                             )
-                            .pop();
+                            .into_iter()
+                            .filter(|&k| engine_view.store.stroke_layer(k) != Some(crate::store::chrono_comp::StrokeLayer::Document))
+                            .last();
 
                         if (modifier_keys.contains(&ModifierKey::KeyboardShift))
                             && key_to_add
@@ -431,6 +433,9 @@ impl Selector {
                                     path,
                                     engine_view.camera.viewport(),
                                 )
+                                .into_iter()
+                                .filter(|&k| engine_view.store.stroke_layer(k) != Some(crate::store::chrono_comp::StrokeLayer::Document))
+                                .collect()
                         } else {
                             vec![]
                         }
@@ -440,10 +445,15 @@ impl Selector {
                             && let Some(last) = path.last()
                         {
                             let aabb = Aabb::new_positive(first.pos, last.pos);
-                            engine_view.store.strokes_hitboxes_contained_in_aabb(
-                                aabb,
-                                engine_view.camera.viewport(),
-                            )
+                            engine_view
+                                .store
+                                .strokes_hitboxes_contained_in_aabb(
+                                    aabb,
+                                    engine_view.camera.viewport(),
+                                )
+                                .into_iter()
+                                .filter(|&k| engine_view.store.stroke_layer(k) != Some(crate::store::chrono_comp::StrokeLayer::Document))
+                                .collect()
                         } else {
                             vec![]
                         }
@@ -456,7 +466,9 @@ impl Selector {
                                     engine_view.camera.viewport(),
                                     last.pos,
                                 )
-                                .pop()
+                                .into_iter()
+                                .filter(|&k| engine_view.store.stroke_layer(k) != Some(crate::store::chrono_comp::StrokeLayer::Document))
+                                .last()
                         }) {
                             vec![key]
                         } else {
@@ -465,10 +477,15 @@ impl Selector {
                     }
                     SelectorStyle::IntersectingPath => {
                         if path.len() >= 3 {
-                            engine_view.store.strokes_hitboxes_intersect_path(
-                                path,
-                                engine_view.camera.viewport(),
-                            )
+                            engine_view
+                                .store
+                                .strokes_hitboxes_intersect_path(
+                                    path,
+                                    engine_view.camera.viewport(),
+                                )
+                                .into_iter()
+                                .filter(|&k| engine_view.store.stroke_layer(k) != Some(crate::store::chrono_comp::StrokeLayer::Document))
+                                .collect()
                         } else {
                             vec![]
                         }
@@ -482,6 +499,45 @@ impl Selector {
                     widget_flags.deselect_color_setters = true;
 
                     progress = PenProgress::InProgress;
+                } else {
+                    // Check if the user selected a region containing PDF / embedded text
+                    let text_bounds = match engine_view.config.pens_config.selector_config.style {
+                        SelectorStyle::Rectangle => {
+                            if let (Some(first), Some(last)) = (path.first(), path.last()) {
+                                Some(Aabb::new_positive(first.pos, last.pos))
+                            } else {
+                                None
+                            }
+                        }
+                        SelectorStyle::Polygon | SelectorStyle::IntersectingPath => {
+                            if path.len() >= 3 {
+                                let mut b = Aabb::new_invalid();
+                                for p in path.iter() {
+                                    b.take_point(p.pos);
+                                }
+                                Some(b)
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+
+                    if let Some(tb) = text_bounds {
+                        let words = engine_view.store.extract_text_in_bounds(tb);
+                        if !words.is_empty() {
+                            let text = words.join(" ");
+                            let count = words.len();
+                            let preview: String = text.chars().take(35).collect();
+                            widget_flags.clipboard_content = Some(vec![
+                                (text.into_bytes(), "text/plain".to_string()),
+                            ]);
+                            widget_flags.clipboard_toast = Some(format!(
+                                "Texto copiado ({count} palavras): \"{preview}...\"! Cole com ⌘V"
+                            ));
+                            progress = PenProgress::Finished;
+                        }
+                    }
                 }
 
                 widget_flags |= self.update_state(engine_view);

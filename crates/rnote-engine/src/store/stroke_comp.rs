@@ -785,4 +785,63 @@ impl StrokeStore {
             })
             .collect()
     }
+
+    /// Returns the layer of the stroke with the given key.
+    pub fn stroke_layer(&self, key: StrokeKey) -> Option<StrokeLayer> {
+        self.chrono_components.get(key).map(|c| c.layer)
+    }
+
+    /// Extracts all text snippets in natural reading order inside the given bounding box.
+    pub fn extract_text_in_bounds(&self, bounds: Aabb) -> Vec<String> {
+        let keys = self.keys_sorted_chrono_intersecting_bounds(bounds);
+        let mut words_with_pos: Vec<(String, Aabb)> = Vec::new();
+
+        for key in keys {
+            if let Some(stroke) = self.get_stroke_arc(key) {
+                match &*stroke {
+                    crate::strokes::Stroke::TextStroke(t) => {
+                        let t_bounds = t.bounds();
+                        if bounds.intersects(&t_bounds) {
+                            words_with_pos.push((t.text.clone(), t_bounds));
+                        }
+                    }
+                    crate::strokes::Stroke::BitmapImage(b) => {
+                        for run in &b.text_runs {
+                            let run_bounds = crate::textsearch::text_run_to_doc_bounds(
+                                &run.bbox,
+                                &b.rectangle,
+                            );
+                            if bounds.intersects(&run_bounds) {
+                                words_with_pos.push((run.text.clone(), run_bounds));
+                            }
+                        }
+                    }
+                    crate::strokes::Stroke::VectorImage(v) => {
+                        for run in &v.text_runs {
+                            let run_bounds = crate::textsearch::text_run_to_doc_bounds(
+                                &run.bbox,
+                                &v.rectangle,
+                            );
+                            if bounds.intersects(&run_bounds) {
+                                words_with_pos.push((run.text.clone(), run_bounds));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Sort in natural reading order: top-to-bottom, left-to-right
+        words_with_pos.sort_by(|a, b| {
+            let y_diff = (a.1.mins[1] - b.1.mins[1]).abs();
+            if y_diff > 12.0 {
+                a.1.mins[1].total_cmp(&b.1.mins[1])
+            } else {
+                a.1.mins[0].total_cmp(&b.1.mins[0])
+            }
+        });
+
+        words_with_pos.into_iter().map(|(w, _)| w).collect()
+    }
 }

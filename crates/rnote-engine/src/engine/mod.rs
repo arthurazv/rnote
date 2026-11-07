@@ -1143,4 +1143,18 @@ impl Engine {
 
         matches
     }
+
+    /// Extracts text contained within the given bounding box (or current selection if None) in natural reading order.
+    pub fn extract_text(&self, bounds: Option<Aabb>) -> Option<String> {
+        let b = bounds.or_else(|| {
+            let selection = self.store.selection_keys_as_rendered();
+            self.store.bounds_for_strokes(&selection)
+        })?;
+        let words = self.store.extract_text_in_bounds(b);
+        if words.is_empty() {
+            None
+        } else {
+            Some(words.join(" "))
+        }
+    }
 }

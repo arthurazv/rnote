@@ -161,20 +161,116 @@ impl PenBehaviour for Selector {
         &self,
         engine_view: &EngineView,
     ) -> oneshot::Receiver<anyhow::Result<(Vec<(Vec<u8>, String)>, WidgetFlags)>> {
-        let widget_flags = WidgetFlags::default();
+        let mut widget_flags = WidgetFlags::default();
         let (sender, receiver) =
             oneshot::channel::<anyhow::Result<(Vec<(Vec<u8>, String)>, WidgetFlags)>>();
         let mut clipboard_content = Vec::with_capacity(1);
 
-        let stroke_content = if let SelectorState::ModifySelection { selection, .. } = &self.state {
-            Some(engine_view.store.fetch_stroke_content(selection))
+        let (stroke_content, extracted_text) = if let SelectorState::ModifySelection {
+            selection,
+            selection_bounds,
+            ..
+        } = &self.state
+        {
+            let sc = engine_view.store.fetch_stroke_content(selection);
+            let words = engine_view.store.extract_text_in_bounds(*selection_bounds);
+            let text_opt = if !words.is_empty() {
+                Some(words.join(" "))
+            } else {
+                None
+            };
+            (Some(sc), text_opt)
         } else {
-            None
+            (None, None)
         };
 
         rayon::spawn(move || {
             let result = move || {
                 if let Some(stroke_content) = stroke_content {
+                    let stroke_content_svg = stroke_content.gen_svg(
+                        false,
+                        false,
+                        false,
+                        StrokeContent::CLIPBOARD_EXPORT_MARGIN,
+                    )?;
+
+                    // Extract text FIRST so text editors receive plain text!
+                    if let Some(ref text) = extracted_text {
+                        clipboard_content.push((text.as_bytes().to_vec(), "text/plain".to_string()));
+                    }
+
+                    // Add StrokeContent
+                    clipboard_content.push((
+                        serde_json::to_string(&stroke_content)?.into_bytes(),
+                        StrokeContent::MIME_TYPE.to_string(),
+                    ));
+                    if let Some(stroke_content_svg) = stroke_content_svg {
+                        // Add generated Svg (complete document)
+                        let clipboard_svg = stroke_content_svg.to_document();
+                        clipboard_content
+                            .push((clipboard_svg.into_bytes(), Svg::MIME_TYPE.to_string()));
+
+                        // Add rendered Png
+                        let image = stroke_content_svg
+                            .gen_image(Engine::STROKE_EXPORT_IMAGE_SCALE)?
+                            .into_encoded_bytes(image::ImageFormat::Png, None)?;
+                        clipboard_content.push((image, String::from("image/png")));
+                    }
+                }
+                if let Some(ref text) = extracted_text {
+                    let preview: String = text.chars().take(35).collect();
+                    widget_flags.clipboard_toast = Some(format!("Texto copiado: \"{preview}...\""));
+                }
+                Ok((clipboard_content, widget_flags))
+            };
+            if sender.send(result()).is_err() {
+                error!(
+                    "Sending fetched selector clipboard content failed, receiver already dropped."
+                );
+            }
+        });
+
+        receiver
+    }
+
+    fn cut_clipboard_content(
+        &mut self,
+        engine_view: &mut EngineViewMut,
+    ) -> oneshot::Receiver<anyhow::Result<(Vec<(Vec<u8>, String)>, WidgetFlags)>> {
+        let (sender, receiver) =
+            oneshot::channel::<anyhow::Result<(Vec<(Vec<u8>, String)>, WidgetFlags)>>();
+        let mut widget_flags = WidgetFlags::default();
+        let mut clipboard_content = Vec::with_capacity(1);
+
+        let (stroke_content, extracted_text) = if let SelectorState::ModifySelection {
+            selection,
+            selection_bounds,
+            ..
+        } = &self.state
+        {
+            let words = engine_view.store.extract_text_in_bounds(*selection_bounds);
+            let text_opt = if !words.is_empty() {
+                Some(words.join(" "))
+            } else {
+                None
+            };
+            let c = Some(engine_view.store.cut_stroke_content(selection));
+            self.state = SelectorState::Idle;
+            widget_flags |= engine_view.store.record(Instant::now());
+            widget_flags.store_modified = true;
+            widget_flags.redraw = true;
+            (c, text_opt)
+        } else {
+            (None, None)
+        };
+
+        rayon::spawn(move || {
+            let result = move || {
+                if let Some(stroke_content) = stroke_content {
+                    if let Some(ref text) = extracted_text {
+                        clipboard_content.push((text.as_bytes().to_vec(), "text/plain".to_string()));
+                    }
+
                     let stroke_content_svg = stroke_content.gen_svg(
                         false,
                         false,
@@ -200,65 +296,9 @@ impl PenBehaviour for Selector {
                         clipboard_content.push((image, String::from("image/png")));
                     }
                 }
-                Ok((clipboard_content, widget_flags))
-            };
-            if sender.send(result()).is_err() {
-                error!(
-                    "Sending fetched selector clipboard content failed, receiver already dropped."
-                );
-            }
-        });
-
-        receiver
-    }
-
-    fn cut_clipboard_content(
-        &mut self,
-        engine_view: &mut EngineViewMut,
-    ) -> oneshot::Receiver<anyhow::Result<(Vec<(Vec<u8>, String)>, WidgetFlags)>> {
-        let (sender, receiver) =
-            oneshot::channel::<anyhow::Result<(Vec<(Vec<u8>, String)>, WidgetFlags)>>();
-        let mut widget_flags = WidgetFlags::default();
-        let mut clipboard_content = Vec::with_capacity(1);
-
-        let stroke_content = if let SelectorState::ModifySelection { selection, .. } = &self.state {
-            let c = Some(engine_view.store.cut_stroke_content(selection));
-            self.state = SelectorState::Idle;
-            widget_flags |= engine_view.store.record(Instant::now());
-            widget_flags.store_modified = true;
-            widget_flags.redraw = true;
-            c
-        } else {
-            None
-        };
-
-        rayon::spawn(move || {
-            let result = move || {
-                if let Some(stroke_content) = stroke_content {
-                    let stroke_content_svg = stroke_content.gen_svg(
-                        false,
-                        false,
-                        false,
-                        StrokeContent::CLIPBOARD_EXPORT_MARGIN,
-                    )?;
-
-                    // Add StrokeContent
-                    clipboard_content.push((
-                        serde_json::to_string(&stroke_content)?.into_bytes(),
-                        StrokeContent::MIME_TYPE.to_string(),
-                    ));
-                    if let Some(stroke_content_svg) = stroke_content_svg {
-                        // Add generated Svg (complete document)
-                        let clipboard_svg = stroke_content_svg.to_document();
-                        clipboard_content
-                            .push((clipboard_svg.into_bytes(), Svg::MIME_TYPE.to_string()));
-
-                        // Add rendered Png
-                        let image = stroke_content_svg
-                            .gen_image(Engine::STROKE_EXPORT_IMAGE_SCALE)?
-                            .into_encoded_bytes(image::ImageFormat::Png, None)?;
-                        clipboard_content.push((image, String::from("image/png")));
-                    }
+                if let Some(ref text) = extracted_text {
+                    let preview: String = text.chars().take(35).collect();
+                    widget_flags.clipboard_toast = Some(format!("Texto copiado: \"{preview}...\""));
                 }
                 Ok((clipboard_content, widget_flags))
             };

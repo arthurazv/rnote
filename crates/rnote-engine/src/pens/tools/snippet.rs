@@ -9,8 +9,7 @@ use piet::RenderContext;
 use rnote_compose::color;
 use rnote_compose::eventresult::{EventPropagation, EventResult};
 use rnote_compose::ext::AabbExt;
-use rnote_compose::penevent::{ModifierKey, PenEvent, PenProgress};
-use rnote_compose::shapes::Shapeable;
+use rnote_compose::penevent::{PenEvent, PenProgress};
 use std::time::Instant;
 
 #[derive(Clone, Debug)]
@@ -73,7 +72,7 @@ impl SnippetTool {
                     progress: PenProgress::InProgress,
                 }
             }
-            (ToolsState::Active, PenEvent::Up { element, modifier_keys }) => {
+            (ToolsState::Active, PenEvent::Up { element, modifier_keys: _ }) => {
                 self.current_pos = element.pos;
                 self.state = ToolsState::Idle;
                 widget_flags.redraw = true;
@@ -92,7 +91,6 @@ impl SnippetTool {
                             .with_background(engine_view.document.config.background)
                             .with_bounds(bounds);
 
-                        let is_cut = modifier_keys.contains(&ModifierKey::KeyboardShift);
                         let image_scale = 2.0;
 
                         if let Ok(cropped_image) = crate::Image::gen_with_cairo(
@@ -115,9 +113,29 @@ impl SnippetTool {
                             {
                                 let mut clipboard_content = Vec::new();
 
+                                // Extract any text embedded inside the cropped bounds in natural reading order
+                                let extracted_text_pieces = engine_view.store.extract_text_in_bounds(bounds);
+                                if !extracted_text_pieces.is_empty() {
+                                    let joined_text = extracted_text_pieces.join(" ");
+                                    // Put plain text FIRST so external apps and text fields paste the text!
+                                    clipboard_content.push((
+                                        joined_text.into_bytes(),
+                                        "text/plain".to_string(),
+                                    ));
+                                }
+
+                                clipboard_content.push((png_bytes, "image/png".to_string()));
+
+                                if let Ok(Some(svg)) =
+                                    stroke_content.gen_svg(true, false, false, 0.0)
+                                {
+                                    clipboard_content.push((
+                                        svg.to_document().into_bytes(),
+                                        Svg::MIME_TYPE.to_string(),
+                                    ));
+                                }
+
                                 // Build a cropped BitmapImage stroke at exact 1:1 document bounds
-                                // with 2x Retina pixel density so pasting inside Rnote (⌘V) pastes
-                                // ONLY the cropped region rather than the entire uncropped PDF page!
                                 let logical_size = bounds.extents();
                                 let affine =
                                     p2d::glamx::DAffine2::from_translation(logical_size * 0.5);
@@ -145,92 +163,20 @@ impl SnippetTool {
                                         StrokeContent::MIME_TYPE.to_string(),
                                     ));
                                 }
-                                if let Ok(Some(svg)) =
-                                    stroke_content.gen_svg(true, false, false, 0.0)
-                                {
-                                    clipboard_content.push((
-                                        svg.to_document().into_bytes(),
-                                        Svg::MIME_TYPE.to_string(),
-                                    ));
-                                }
-                                clipboard_content.push((png_bytes, "image/png".to_string()));
-
-                                // Extract any text embedded inside the cropped bounds (e.g. from PDFs or TextStrokes)
-                                // and place it on the clipboard as "text/plain" so users can paste clean text into any app!
-                                let mut extracted_text_pieces = Vec::new();
-                                for &k in &keys {
-                                    if let Some(stroke) = engine_view.store.get_stroke_arc(k) {
-                                        match &*stroke {
-                                            crate::strokes::Stroke::BitmapImage(b) => {
-                                                for run in &b.text_runs {
-                                                    let run_bounds = crate::textsearch::text_run_to_doc_bounds(&run.bbox, &b.rectangle);
-                                                    if bounds.intersects(&run_bounds) {
-                                                        extracted_text_pieces.push(run.text.clone());
-                                                    }
-                                                }
-                                            }
-                                            crate::strokes::Stroke::VectorImage(v) => {
-                                                for run in &v.text_runs {
-                                                    let run_bounds = crate::textsearch::text_run_to_doc_bounds(&run.bbox, &v.rectangle);
-                                                    if bounds.intersects(&run_bounds) {
-                                                        extracted_text_pieces.push(run.text.clone());
-                                                    }
-                                                }
-                                            }
-                                            crate::strokes::Stroke::TextStroke(t) => {
-                                                if bounds.intersects(&t.bounds()) {
-                                                    extracted_text_pieces.push(t.text.clone());
-                                                }
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                }
-
-                                if !extracted_text_pieces.is_empty() {
-                                    let joined_text = extracted_text_pieces.join(" ");
-                                    clipboard_content.push((
-                                        joined_text.into_bytes(),
-                                        "text/plain".to_string(),
-                                    ));
-                                }
 
                                 widget_flags.clipboard_content = Some(clipboard_content);
 
-                                if is_cut {
-                                    let trash_keys = keys
-                                        .into_iter()
-                                        .filter(|&k| {
-                                            if let Some(stroke) =
-                                                engine_view.store.get_stroke_arc(k)
-                                            {
-                                                bounds.contains(&stroke.bounds())
-                                            } else {
-                                                false
-                                            }
-                                        })
-                                        .collect::<Vec<_>>();
-
-                                    if !trash_keys.is_empty() {
-                                        engine_view.store.set_trashed_keys(&trash_keys, true);
-                                        widget_flags |= engine_view.store.record(Instant::now());
-                                        widget_flags.store_modified = true;
-                                    }
+                                if !extracted_text_pieces.is_empty() {
+                                    let count = extracted_text_pieces.len();
+                                    let preview: String = extracted_text_pieces.join(" ").chars().take(35).collect();
                                     widget_flags.clipboard_toast = Some(
-                                        "Trecho recortado e copiado! Cole com ⌘V".to_string(),
+                                        format!("Texto copiado ({count} palavras): \"{preview}...\""),
                                     );
                                 } else {
-                                    if !extracted_text_pieces.is_empty() {
-                                        let count = extracted_text_pieces.len();
-                                        widget_flags.clipboard_toast = Some(
-                                            format!("Trecho copiado (imagem + {count} palavras)! Cole com ⌘V"),
-                                        );
-                                    } else {
-                                        widget_flags.clipboard_toast = Some(
-                                            "Trecho copiado para a área de transferência! Cole com ⌘V"
-                                                .to_string(),
-                                        );
-                                    }
+                                    widget_flags.clipboard_toast = Some(
+                                        "Trecho copiado para a área de transferência! Cole com ⌘V"
+                                            .to_string(),
+                                    );
                                 }
                             }
                         }

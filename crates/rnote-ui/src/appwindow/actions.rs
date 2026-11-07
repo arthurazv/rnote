@@ -133,6 +133,8 @@ impl RnAppWindow {
         self.add_action(&action_text_underline);
         let action_clipboard_copy = gio::SimpleAction::new("clipboard-copy", None);
         self.add_action(&action_clipboard_copy);
+        let action_copy_text = gio::SimpleAction::new("copy-text", None);
+        self.add_action(&action_copy_text);
         let action_clipboard_cut = gio::SimpleAction::new("clipboard-cut", None);
         self.add_action(&action_clipboard_cut);
         let action_clipboard_paste = gio::SimpleAction::new("clipboard-paste", None);
@@ -1290,6 +1292,31 @@ impl RnAppWindow {
             }));
         }));
 
+        // Copy as Text
+        action_copy_text.connect_activate(clone!(#[weak(rename_to=appwindow)] self, move |_, _| {
+            glib::spawn_future_local(clone!(#[weak] appwindow, async move {
+                let Some(canvas) = appwindow.active_tab_canvas() else {
+                    return;
+                };
+                let engine = canvas.engine_ref();
+                let text_opt = engine.extract_text(None).or_else(|| {
+                    let viewport = engine.camera.viewport();
+                    engine.extract_text(Some(viewport))
+                });
+
+                if let Some(text) = text_opt {
+                    if !text.trim().is_empty() {
+                        appwindow.clipboard().set_text(&text);
+                        let preview: String = text.chars().take(35).collect();
+                        let msg = format!("{}: \"{preview}...\"", gettext("Text copied"));
+                        appwindow.overlays().dispatch_toast_text(&msg, Some(std::time::Duration::from_secs(2)));
+                        return;
+                    }
+                }
+                appwindow.overlays().dispatch_toast_text(&gettext("No text found in selection"), Some(std::time::Duration::from_secs(2)));
+            }));
+        }));
+
         // Clipboard cut
         action_clipboard_cut.connect_activate(clone!(#[weak(rename_to=appwindow)] self, move |_, _| {
             glib::spawn_future_local(clone!(#[weak] appwindow, async move {
@@ -1416,6 +1443,7 @@ impl RnAppWindow {
             app.set_accels_for_action("win.redo", &["<Meta><Shift>z", "<Primary><Shift>z", "<Ctrl><Shift>z"]);
             app.set_accels_for_action("win.search", &["<Meta>f", "<Primary>f", "<Ctrl>f"]);
             app.set_accels_for_action("win.clipboard-copy", &["<Meta>c", "<Primary>c", "<Ctrl>c"]);
+            app.set_accels_for_action("win.copy-text", &["<Meta><Shift>c", "<Primary><Shift>c", "<Ctrl><Shift>c", "<Meta><Alt>c"]);
             app.set_accels_for_action("win.clipboard-cut", &["<Meta>x", "<Primary>x", "<Ctrl>x"]);
             app.set_accels_for_action("win.clipboard-paste", &["<Meta>v", "<Primary>v", "<Ctrl>v"]);
             app.set_accels_for_action("win.selection-select-all", &["<Meta>a", "<Primary>a", "<Ctrl>a"]);
@@ -1479,6 +1507,7 @@ impl RnAppWindow {
             app.set_accels_for_action("win.redo", &["<Primary><Shift>z", "<Ctrl><Shift>z"]);
             app.set_accels_for_action("win.search", &["<Primary>f", "<Ctrl>f"]);
             app.set_accels_for_action("win.clipboard-copy", &["<Primary>c", "<Ctrl>c"]);
+            app.set_accels_for_action("win.copy-text", &["<Primary><Shift>c", "<Ctrl><Shift>c", "<Primary><Alt>c"]);
             app.set_accels_for_action("win.clipboard-cut", &["<Primary>x", "<Ctrl>x"]);
             app.set_accels_for_action("win.clipboard-paste", &["<Primary>v", "<Ctrl>v"]);
             app.set_accels_for_action("win.selection-select-all", &["<Primary>a", "<Ctrl>a"]);

@@ -317,4 +317,50 @@ mod tests {
         assert_eq!(keys.len(), 1);
         let _ = KeyboardKey::Unicode('a');
     }
+
+    #[test]
+    fn test_text_extraction_and_clipboard_plain_text() {
+        let pdf_bytes = build_sample_multipage_pdf(&[
+            "Antigravity Engineering Rocks",
+            "Second Page Document Text",
+        ]);
+
+        let mut prefs = PdfImportPrefs::default();
+        prefs.pages_type = PdfImportPagesType::Bitmap;
+        prefs.page_spacing = PdfImportPageSpacing::Continuous;
+        prefs.adjust_document = true;
+
+        let format = Format::default();
+        let strokes = BitmapImage::from_pdf_bytes(
+            &pdf_bytes,
+            prefs,
+            Vector2::ZERO,
+            None,
+            &format,
+            None,
+        ).expect("PDF import should succeed");
+
+        assert_eq!(strokes.len(), 2);
+        let mut engine = Engine::default();
+        for s in strokes {
+            engine.store.insert_stroke(Stroke::BitmapImage(s), Some(crate::store::chrono_comp::StrokeLayer::Document));
+        }
+
+        // Test extract_text_in_bounds
+        let all_bounds = engine.store.bounds_for_strokes(&engine.store.stroke_keys_as_rendered()).unwrap();
+        let words = engine.store.extract_text_in_bounds(all_bounds);
+        assert!(!words.is_empty(), "Extracted words should not be empty");
+        let full_text = words.join(" ");
+        assert!(full_text.contains("Antigravity"), "Should contain Antigravity");
+        assert!(full_text.contains("Engineering"), "Should contain Engineering");
+
+        // Test engine.extract_text
+        let extracted = engine.extract_text(Some(all_bounds)).expect("extract_text should return string");
+        assert!(extracted.contains("Antigravity"));
+
+        // Verify that background Document layer strokes are correctly marked as StrokeLayer::Document
+        for key in engine.store.stroke_keys_as_rendered() {
+            assert_eq!(engine.store.stroke_layer(key), Some(crate::store::chrono_comp::StrokeLayer::Document));
+        }
+    }
 }

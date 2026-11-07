@@ -120,6 +120,10 @@
               <attribute name="action">win.clipboard-copy</attribute>
             </item>
             <item>
+              <attribute name="label" translatable="yes">Copy as _Text</attribute>
+              <attribute name="action">win.copy-text</attribute>
+            </item>
+            <item>
               <attribute name="label" translatable="yes">C_ut</attribute>
               <attribute name="action">win.clipboard-cut</attribute>
             </item>
