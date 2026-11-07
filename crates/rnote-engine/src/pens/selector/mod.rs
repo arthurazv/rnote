@@ -72,6 +72,9 @@ pub(super) enum SelectorState {
         word_boxes: Vec<Aabb>,
         text: String,
     },
+    AreaSelected {
+        bounds: Aabb,
+    },
     ModifySelection {
         modify_state: ModifyState,
         selection: Vec<StrokeKey>,
@@ -116,7 +119,10 @@ impl PenBehaviour for Selector {
     fn update_state(&mut self, engine_view: &mut EngineViewMut) -> WidgetFlags {
         let mut widget_flags = WidgetFlags::default();
 
-        if let SelectorState::TextSelected { .. } = self.state {
+        if matches!(
+            self.state,
+            SelectorState::TextSelected { .. } | SelectorState::AreaSelected { .. }
+        ) {
             widget_flags.redraw = true;
             return widget_flags;
         }
@@ -175,6 +181,21 @@ impl PenBehaviour for Selector {
         let (sender, receiver) =
             oneshot::channel::<anyhow::Result<(Vec<(Vec<u8>, String)>, WidgetFlags)>>();
         let mut clipboard_content = Vec::with_capacity(1);
+
+        let area_clipboard = if let SelectorState::AreaSelected { bounds } = &self.state {
+            engine_view.store.generate_area_snippet_clipboard(
+                engine_view.document.config.background,
+                *bounds,
+            )
+        } else {
+            None
+        };
+
+        if let Some((clip_content, flags)) = area_clipboard {
+            widget_flags |= flags;
+            let _ = sender.send(Ok((clip_content, widget_flags)));
+            return receiver;
+        }
 
         let (stroke_content, extracted_text) = match &self.state {
             SelectorState::TextSelected { text, .. } => (None, Some(text.clone())),
@@ -253,6 +274,24 @@ impl PenBehaviour for Selector {
         let mut widget_flags = WidgetFlags::default();
         let mut clipboard_content = Vec::with_capacity(1);
 
+        let area_cut = if let SelectorState::AreaSelected { bounds } = &self.state {
+            let clip = engine_view.store.generate_area_snippet_clipboard(
+                engine_view.document.config.background,
+                *bounds,
+            );
+            self.state = SelectorState::Idle;
+            widget_flags.redraw = true;
+            clip
+        } else {
+            None
+        };
+
+        if let Some((clip_content, flags)) = area_cut {
+            widget_flags |= flags;
+            let _ = sender.send(Ok((clip_content, widget_flags)));
+            return receiver;
+        }
+
         let (stroke_content, extracted_text) = if let SelectorState::ModifySelection {
             selection,
             selection_bounds,
@@ -329,6 +368,7 @@ impl DrawableOnDoc for Selector {
         match &self.state {
             SelectorState::Idle => None,
             SelectorState::TextSelected { bounds, .. } => Some(bounds.loosened(10.0 / total_zoom)),
+            SelectorState::AreaSelected { bounds } => Some(bounds.loosened(10.0 / total_zoom)),
             SelectorState::Selecting { path } => {
                 // Making sure bounds are always outside of coord + width
                 let mut path_iter = path.iter();
@@ -384,6 +424,59 @@ impl DrawableOnDoc for Selector {
                     cx.fill(select_rect, &fill_color);
                     cx.stroke(select_rect, &border_color, 1.0 / total_zoom);
                 }
+            }
+            SelectorState::AreaSelected { bounds } => {
+                let line_width = 1.5 / total_zoom;
+                let rect = bounds.to_kurbo_rect();
+
+                // Semi-transparent blue highlight fill
+                let fill_color = piet::Color::rgba(0.21, 0.52, 0.89, 0.15);
+                cx.fill(rect, &fill_color);
+
+                // Dashed border
+                let stroke_color = color::GNOME_BLUES[3];
+                const DASH_PATTERN: &[f64] = &[6.0, 4.0];
+                let stroke_style = piet::StrokeStyle::new()
+                    .dash_pattern(DASH_PATTERN)
+                    .line_cap(piet::LineCap::Round)
+                    .line_join(piet::LineJoin::Round);
+                cx.stroke_styled(rect, &stroke_color, line_width, &stroke_style);
+
+                // Corner accents (4 corners)
+                let corner_len = (10.0 / total_zoom).min(bounds.extents()[0] * 0.3).min(bounds.extents()[1] * 0.3);
+                let corner_style = piet::StrokeStyle::new()
+                    .line_cap(piet::LineCap::Square)
+                    .line_join(piet::LineJoin::Round);
+                let corner_color = color::GNOME_BLUES[4];
+                let corner_width = 2.5 / total_zoom;
+
+                // Top-left
+                let mut p = piet::kurbo::BezPath::new();
+                p.move_to((bounds.mins[0], bounds.mins[1] + corner_len));
+                p.line_to((bounds.mins[0], bounds.mins[1]));
+                p.line_to((bounds.mins[0] + corner_len, bounds.mins[1]));
+                cx.stroke_styled(p, &corner_color, corner_width, &corner_style);
+
+                // Top-right
+                let mut p = piet::kurbo::BezPath::new();
+                p.move_to((bounds.maxs[0] - corner_len, bounds.mins[1]));
+                p.line_to((bounds.maxs[0], bounds.mins[1]));
+                p.line_to((bounds.maxs[0], bounds.mins[1] + corner_len));
+                cx.stroke_styled(p, &corner_color, corner_width, &corner_style);
+
+                // Bottom-right
+                let mut p = piet::kurbo::BezPath::new();
+                p.move_to((bounds.maxs[0], bounds.maxs[1] - corner_len));
+                p.line_to((bounds.maxs[0], bounds.maxs[1]));
+                p.line_to((bounds.maxs[0] - corner_len, bounds.maxs[1]));
+                cx.stroke_styled(p, &corner_color, corner_width, &corner_style);
+
+                // Bottom-left
+                let mut p = piet::kurbo::BezPath::new();
+                p.move_to((bounds.mins[0] + corner_len, bounds.maxs[1]));
+                p.line_to((bounds.mins[0], bounds.maxs[1]));
+                p.line_to((bounds.mins[0], bounds.maxs[1] - corner_len));
+                cx.stroke_styled(p, &corner_color, corner_width, &corner_style);
             }
             SelectorState::Selecting { path } => {
                 match engine_view.config.pens_config.selector_config.style {

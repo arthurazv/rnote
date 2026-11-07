@@ -26,7 +26,7 @@ use crate::store::StrokeKey;
 use crate::store::render_comp::{self, RenderCompState};
 use crate::strokes::content::GeneratedContentImages;
 use crate::strokes::textstroke::{TextAttribute, TextStyle};
-use crate::{Camera, Document, PenHolder, StrokeStore};
+use crate::{Camera, Document, DrawableOnDoc, PenHolder, StrokeStore};
 use crate::{SelectionCollision, WidgetFlags};
 use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
@@ -917,6 +917,11 @@ impl Engine {
     ) -> oneshot::Receiver<anyhow::Result<(Vec<(Vec<u8>, String)>, WidgetFlags)>> {
         self.penholder
             .cut_clipboard_content(&mut engine_view_mut!(self))
+    }
+
+    /// Bounds of the active pen visual feedback on doc (e.g. selection box, laser, etc.).
+    pub fn current_pen_bounds_on_doc(&self) -> Option<p2d::bounding_volume::Aabb> {
+        self.penholder.bounds_on_doc(&engine_view!(self))
     }
 
     pub fn set_doc_layout(&mut self, layout: Layout) -> WidgetFlags {

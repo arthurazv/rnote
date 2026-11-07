@@ -888,4 +888,87 @@ impl StrokeStore {
         merged.push(current);
         merged
     }
+
+    /// Generates high-resolution cropped snippet clipboard data for the given bounding box.
+    /// This captures everything rendered within bounds (PDF pages, images, handwritten strokes, backgrounds)
+    /// and packages them with high-fidelity StrokeContent, PNG, SVG and extracted text.
+    pub(crate) fn generate_area_snippet_clipboard(
+        &self,
+        background: crate::document::Background,
+        bounds: Aabb,
+    ) -> Option<(Vec<(Vec<u8>, String)>, WidgetFlags)> {
+        let mut widget_flags = WidgetFlags::default();
+        let keys = self.stroke_keys_as_rendered_intersecting_bounds(bounds);
+        let stroke_content = self
+            .fetch_stroke_content(&keys)
+            .with_background(background)
+            .with_bounds(bounds);
+
+        let image_scale = 2.0;
+
+        let cropped_image = crate::Image::gen_with_cairo(
+            |cairo_cx| {
+                stroke_content.draw_to_cairo(
+                    cairo_cx,
+                    true,
+                    false,
+                    false,
+                    0.0,
+                    image_scale,
+                )
+            },
+            bounds,
+            image_scale,
+        ).ok()?;
+
+        let png_bytes = cropped_image
+            .clone()
+            .into_encoded_bytes(image::ImageFormat::Png, None)
+            .ok()?;
+
+        let mut clipboard_content = Vec::new();
+
+        // 1. Native StrokeContent for pasting 1:1 inside Rnote notes
+        let logical_size = bounds.extents();
+        let affine = p2d::glamx::DAffine2::from_translation(logical_size * 0.5);
+        let cropped_bitmap = crate::strokes::BitmapImage {
+            image: cropped_image,
+            rectangle: rnote_compose::shapes::Rectangle {
+                cuboid: p2d::shape::Cuboid::new(logical_size * 0.5),
+                affine,
+            },
+            text_runs: Vec::new(),
+            pdf_source: None,
+        };
+        let cropped_stroke_content = StrokeContent::default()
+            .with_strokes(vec![crate::engine::strokecontent::LayeredStroke {
+                stroke: std::sync::Arc::new(crate::strokes::Stroke::BitmapImage(cropped_bitmap)),
+                layer: crate::store::chrono_comp::StrokeLayer::UserLayer(0),
+            }])
+            .with_bounds(Aabb::new(Vector2::ZERO, logical_size));
+
+        if let Ok(json) = serde_json::to_string(&cropped_stroke_content) {
+            clipboard_content.push((json.into_bytes(), StrokeContent::MIME_TYPE.to_string()));
+        }
+
+        // 2. High-res PNG for external apps
+        clipboard_content.push((png_bytes, "image/png".to_string()));
+
+        // 3. SVG vector export
+        if let Ok(Some(svg)) = stroke_content.gen_svg(true, false, false, 0.0) {
+            clipboard_content.push((svg.to_document().into_bytes(), crate::Svg::MIME_TYPE.to_string()));
+        }
+
+        // 4. Extracted plain text (secondary fallback for pure text fields)
+        let extracted_text_pieces = self.extract_text_in_bounds(bounds);
+        if !extracted_text_pieces.is_empty() {
+            let joined_text = extracted_text_pieces.join(" ");
+            clipboard_content.push((joined_text.into_bytes(), "text/plain".to_string()));
+        }
+
+        widget_flags.clipboard_content = Some(clipboard_content.clone());
+        widget_flags.clipboard_toast = Some("Snippet copied to clipboard".to_string());
+
+        Some((clipboard_content, widget_flags))
+    }
 }

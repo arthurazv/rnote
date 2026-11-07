@@ -28,7 +28,9 @@ impl Selector {
         self.pos = Some(element.pos);
 
         let event_result = match &mut self.state {
-            SelectorState::Idle | SelectorState::TextSelected { .. } => {
+            SelectorState::Idle
+            | SelectorState::TextSelected { .. }
+            | SelectorState::AreaSelected { .. } => {
                 // Deselect on start
                 let selection_keys = engine_view.store.selection_keys_as_rendered();
                 if !selection_keys.is_empty() {
@@ -416,7 +418,9 @@ impl Selector {
         self.pos = Some(element.pos);
 
         let event_result = match &mut self.state {
-            SelectorState::Idle | SelectorState::TextSelected { .. } => EventResult {
+            SelectorState::Idle
+            | SelectorState::TextSelected { .. }
+            | SelectorState::AreaSelected { .. } => EventResult {
                 handled: false,
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,
@@ -552,9 +556,52 @@ impl Selector {
                     widget_flags.deselect_color_setters = true;
 
                     progress = PenProgress::InProgress;
-                }
+                    widget_flags |= self.update_state(engine_view);
+                } else {
+                    let area_bounds = match engine_view.config.pens_config.selector_config.style {
+                        SelectorStyle::Rectangle => {
+                            if let (Some(first), Some(last)) = (path.first(), path.last()) {
+                                Some(Aabb::new_positive(first.pos, last.pos))
+                            } else {
+                                None
+                            }
+                        }
+                        SelectorStyle::Polygon => {
+                            if path.len() >= 3 {
+                                let mut b = Aabb::new_invalid();
+                                for p in path {
+                                    b.take_point(p.pos);
+                                }
+                                if b.assert_valid().is_ok() {
+                                    Some(b)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
 
-                widget_flags |= self.update_state(engine_view);
+                    if let Some(bounds) = area_bounds
+                        && bounds.extents()[0] >= 5.0
+                        && bounds.extents()[1] >= 5.0
+                    {
+                        if let Some((_, flags)) = engine_view.store.generate_area_snippet_clipboard(
+                            engine_view.document.config.background,
+                            bounds,
+                        ) {
+                            widget_flags |= flags;
+                            self.state = SelectorState::AreaSelected { bounds };
+                        } else {
+                            self.state = SelectorState::Idle;
+                        }
+                    } else {
+                        self.state = SelectorState::Idle;
+                    }
+                    widget_flags.redraw = true;
+                }
 
                 EventResult {
                     handled: true,
@@ -618,7 +665,9 @@ impl Selector {
         self.pos = Some(element.pos);
 
         let event_result = match &mut self.state {
-            SelectorState::Idle | SelectorState::TextSelected { .. } => EventResult {
+            SelectorState::Idle
+            | SelectorState::TextSelected { .. }
+            | SelectorState::AreaSelected { .. } => EventResult {
                 handled: false,
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,
@@ -677,7 +726,7 @@ impl Selector {
                     progress: PenProgress::InProgress,
                 },
             },
-            SelectorState::TextSelected { .. } => match keyboard_key {
+            SelectorState::TextSelected { .. } | SelectorState::AreaSelected { .. } => match keyboard_key {
                 KeyboardKey::Escape => {
                     self.state = SelectorState::Idle;
                     widget_flags.redraw = true;
@@ -808,7 +857,9 @@ impl Selector {
         self.pos = None;
 
         let event_result = match &mut self.state {
-            SelectorState::Idle | SelectorState::TextSelected { .. } => EventResult {
+            SelectorState::Idle
+            | SelectorState::TextSelected { .. }
+            | SelectorState::AreaSelected { .. } => EventResult {
                 handled: false,
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,
@@ -837,7 +888,9 @@ impl Selector {
         self.pos = None;
 
         let event_result = match &mut self.state {
-            SelectorState::Idle | SelectorState::TextSelected { .. } => EventResult {
+            SelectorState::Idle
+            | SelectorState::TextSelected { .. }
+            | SelectorState::AreaSelected { .. } => EventResult {
                 handled: false,
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,

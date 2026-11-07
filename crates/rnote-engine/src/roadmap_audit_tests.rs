@@ -454,4 +454,118 @@ mod tests {
         assert_eq!(merged[1].mins, Vector2::new(10.0, 45.0));
         assert_eq!(merged[1].maxs, Vector2::new(115.0, 60.0));
     }
+
+    #[test]
+    fn test_area_selector_crops_and_stays_marked() {
+        use crate::Engine;
+        use crate::engine::StrokeContent;
+        use crate::pens::PenStyle;
+        use crate::pens::pensconfig::selectorconfig::SelectorStyle;
+        use crate::strokes::Stroke;
+        use p2d::bounding_volume::Aabb;
+        use p2d::glamx::DAffine2;
+        use p2d::math::Vector2;
+        use rnote_compose::ext::DAffine2Ext;
+        use rnote_compose::penevent::{KeyboardKey, PenEvent};
+        use rnote_compose::penpath::Element;
+        use std::collections::HashSet;
+        use std::time::{Duration, Instant};
+
+        let mut engine = Engine::default();
+
+        // 1. Insert a 600x800 background document image (e.g. PDF page with questions)
+        let placeholder_bounds = Aabb::new(Vector2::ZERO, Vector2::new(600.0, 800.0));
+        let dummy_pixels = vec![255u8; 600 * 800 * 4];
+        let img = crate::Image {
+            data: glib::Bytes::from_owned(dummy_pixels),
+            rectangle: rnote_compose::shapes::Rectangle::from_p2d_aabb(placeholder_bounds),
+            pixel_width: 600,
+            pixel_height: 800,
+            memory_format: crate::image::ImageMemoryFormat::R8g8b8a8Premultiplied,
+        };
+        let mut transform = DAffine2::IDENTITY;
+        transform.append_translation_mut(Vector2::new(300.0, 400.0));
+        let rect = rnote_compose::shapes::Rectangle {
+            cuboid: p2d::shape::Cuboid::new(Vector2::new(300.0, 400.0)),
+            affine: transform,
+        };
+        let doc_image = crate::strokes::BitmapImage {
+            image: img,
+            rectangle: rect,
+            text_runs: Vec::new(),
+            pdf_source: None,
+        };
+        engine.store.insert_stroke(
+            Stroke::BitmapImage(doc_image),
+            Some(crate::store::chrono_comp::StrokeLayer::Document),
+        );
+
+        // 2. Select the Selector tool with Rectangle style
+        engine.config.write().pens_config.selector_config.style = SelectorStyle::Rectangle;
+        let _ = engine.change_pen_style(PenStyle::Selector);
+
+        // 3. Drag a 150x100 rectangular crop around a question inside the page
+        let now = Instant::now();
+        let _ = engine.handle_pen_event(
+            PenEvent::Down {
+                element: Element::new(Vector2::new(40.0, 60.0), 0.5),
+                modifier_keys: HashSet::new(),
+            },
+            None,
+            now,
+        );
+        let (_, flags) = engine.handle_pen_event(
+            PenEvent::Up {
+                element: Element::new(Vector2::new(190.0, 160.0), 0.5),
+                modifier_keys: HashSet::new(),
+            },
+            None,
+            now + Duration::from_millis(50),
+        );
+
+        // 4. Verify the selector stays marked on doc!
+        let bounds_on_doc = engine.current_pen_bounds_on_doc();
+        assert!(
+            bounds_on_doc.is_some(),
+            "The selector MUST stay marked on screen for the chosen section!"
+        );
+
+        // 5. Verify clipboard was populated with StrokeContent and image/png
+        let clip = flags.clipboard_content.expect("Must populate clipboard_content on area selection");
+        let stroke_json = clip
+            .iter()
+            .find(|(_, mime)| mime == StrokeContent::MIME_TYPE)
+            .expect("Must have StrokeContent::MIME_TYPE");
+        let png_entry = clip
+            .iter()
+            .find(|(_, mime)| mime == "image/png")
+            .expect("Must have image/png");
+        assert!(!png_entry.0.is_empty());
+
+        let pasted_content: StrokeContent =
+            serde_json::from_slice(&stroke_json.0).expect("Valid StrokeContent JSON");
+        assert_eq!(pasted_content.strokes.len(), 1);
+        let pasted_bounds = pasted_content.strokes[0].stroke.bounds();
+        assert!(
+            (pasted_bounds.extents()[0] - 150.0).abs() < 1e-3
+                && (pasted_bounds.extents()[1] - 100.0).abs() < 1e-3,
+            "Pasted cropped image must match exact selected dimensions 150x100, got: {:?}",
+            pasted_bounds.extents()
+        );
+
+        // 6. Press Escape to clear the selection
+        let (_, esc_flags) = engine.handle_pen_event(
+            PenEvent::KeyPressed {
+                keyboard_key: KeyboardKey::Escape,
+                modifier_keys: HashSet::new(),
+            },
+            None,
+            now + Duration::from_millis(100),
+        );
+        assert!(esc_flags.redraw);
+        assert!(
+            engine.current_pen_bounds_on_doc().is_none(),
+            "Escape must clear the area selection back to Idle"
+        );
+    }
 }

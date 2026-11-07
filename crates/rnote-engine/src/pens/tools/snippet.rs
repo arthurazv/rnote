@@ -1,8 +1,7 @@
 // Imports
 use super::ToolsState;
 use crate::engine::{EngineView, EngineViewMut};
-use crate::engine::StrokeContent;
-use crate::{Svg, WidgetFlags};
+use crate::WidgetFlags;
 use p2d::bounding_volume::{Aabb, BoundingVolume};
 use p2d::math::Vector2;
 use piet::RenderContext;
@@ -17,6 +16,7 @@ pub struct SnippetTool {
     state: ToolsState,
     start_pos: Vector2,
     current_pos: Vector2,
+    pub(crate) selected_bounds: Option<Aabb>,
 }
 
 impl Default for SnippetTool {
@@ -25,6 +25,7 @@ impl Default for SnippetTool {
             state: ToolsState::default(),
             start_pos: Vector2::ZERO,
             current_pos: Vector2::ZERO,
+            selected_bounds: None,
         }
     }
 }
@@ -34,6 +35,7 @@ impl SnippetTool {
         self.state = ToolsState::Idle;
         self.start_pos = Vector2::ZERO;
         self.current_pos = Vector2::ZERO;
+        self.selected_bounds = None;
     }
 
     pub fn handle_event(
@@ -46,6 +48,7 @@ impl SnippetTool {
 
         let result = match (&mut self.state, event) {
             (ToolsState::Idle, PenEvent::Down { element, .. }) => {
+                self.selected_bounds = None;
                 self.start_pos = element.pos;
                 self.current_pos = element.pos;
                 self.state = ToolsState::Active;
@@ -81,107 +84,14 @@ impl SnippetTool {
                 bounds.ensure_positive();
 
                 if bounds.extents()[0] >= 5.0 && bounds.extents()[1] >= 5.0 {
-                    let keys = engine_view
-                        .store
-                        .stroke_keys_as_rendered_intersecting_bounds(bounds);
-                    if !keys.is_empty() {
-                        let stroke_content = engine_view
-                            .store
-                            .fetch_stroke_content(&keys)
-                            .with_background(engine_view.document.config.background)
-                            .with_bounds(bounds);
-
-                        let image_scale = 2.0;
-
-                        if let Ok(cropped_image) = crate::Image::gen_with_cairo(
-                            |cairo_cx| {
-                                stroke_content.draw_to_cairo(
-                                    cairo_cx,
-                                    true,
-                                    false,
-                                    false,
-                                    0.0,
-                                    image_scale,
-                                )
-                            },
-                            bounds,
-                            image_scale,
-                        ) {
-                            if let Ok(png_bytes) = cropped_image
-                                .clone()
-                                .into_encoded_bytes(image::ImageFormat::Png, None)
-                            {
-                                let mut clipboard_content = Vec::new();
-
-                                // Extract any text embedded inside the cropped bounds in natural reading order
-                                let extracted_text_pieces = engine_view.store.extract_text_in_bounds(bounds);
-                                if !extracted_text_pieces.is_empty() {
-                                    let joined_text = extracted_text_pieces.join(" ");
-                                    // Put plain text FIRST so external apps and text fields paste the text!
-                                    clipboard_content.push((
-                                        joined_text.into_bytes(),
-                                        "text/plain".to_string(),
-                                    ));
-                                }
-
-                                clipboard_content.push((png_bytes, "image/png".to_string()));
-
-                                if let Ok(Some(svg)) =
-                                    stroke_content.gen_svg(true, false, false, 0.0)
-                                {
-                                    clipboard_content.push((
-                                        svg.to_document().into_bytes(),
-                                        Svg::MIME_TYPE.to_string(),
-                                    ));
-                                }
-
-                                // Build a cropped BitmapImage stroke at exact 1:1 document bounds
-                                let logical_size = bounds.extents();
-                                let affine =
-                                    p2d::glamx::DAffine2::from_translation(logical_size * 0.5);
-                                let cropped_bitmap = crate::strokes::BitmapImage {
-                                    image: cropped_image,
-                                    rectangle: rnote_compose::shapes::Rectangle {
-                                        cuboid: p2d::shape::Cuboid::new(logical_size * 0.5),
-                                        affine,
-                                    },
-                                    text_runs: Vec::new(),
-                                    pdf_source: None,
-                                };
-                                let cropped_stroke_content = StrokeContent::default()
-                                    .with_strokes(vec![crate::engine::strokecontent::LayeredStroke {
-                                        stroke: std::sync::Arc::new(
-                                            crate::strokes::Stroke::BitmapImage(cropped_bitmap),
-                                        ),
-                                        layer: crate::store::chrono_comp::StrokeLayer::UserLayer(0),
-                                    }])
-                                    .with_bounds(Aabb::new(Vector2::ZERO, logical_size));
-
-                                if let Ok(json) = serde_json::to_string(&cropped_stroke_content) {
-                                    clipboard_content.push((
-                                        json.into_bytes(),
-                                        StrokeContent::MIME_TYPE.to_string(),
-                                    ));
-                                }
-
-                                widget_flags.clipboard_content = Some(clipboard_content);
-
-                                if !extracted_text_pieces.is_empty() {
-                                    let preview: String = extracted_text_pieces.join(" ").chars().take(35).collect();
-                                    widget_flags.clipboard_toast = Some(
-                                        format!("Text copied: \"{preview}...\""),
-                                    );
-                                } else {
-                                    widget_flags.clipboard_toast = Some(
-                                        "Snippet copied to clipboard".to_string(),
-                                    );
-                                }
-                            }
-                        }
+                    if let Some((_, flags)) = engine_view.store.generate_area_snippet_clipboard(
+                        engine_view.document.config.background,
+                        bounds,
+                    ) {
+                        widget_flags |= flags;
+                        self.selected_bounds = Some(bounds);
                     }
                 }
-
-                self.reset();
 
                 EventResult {
                     handled: true,
@@ -214,6 +124,8 @@ impl SnippetTool {
             let mut bounds = Aabb::new(self.start_pos, self.current_pos);
             bounds.ensure_positive();
             Some(bounds.loosened(10.0))
+        } else if let Some(bounds) = self.selected_bounds {
+            Some(bounds.loosened(10.0))
         } else {
             None
         }
@@ -224,9 +136,15 @@ impl SnippetTool {
         cx: &mut piet_cairo::CairoRenderContext,
         engine_view: &EngineView,
     ) -> anyhow::Result<()> {
-        if let ToolsState::Active = self.state {
+        let draw_bounds = if let ToolsState::Active = self.state {
             let mut bounds = Aabb::new(self.start_pos, self.current_pos);
             bounds.ensure_positive();
+            Some(bounds)
+        } else {
+            self.selected_bounds
+        };
+
+        if let Some(bounds) = draw_bounds {
 
             let total_zoom = engine_view.camera.total_zoom();
             let line_width = 1.5 / total_zoom;
