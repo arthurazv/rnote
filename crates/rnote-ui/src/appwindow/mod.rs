@@ -663,9 +663,19 @@ impl RnAppWindow {
         target_pos: Option<Vector2>,
         rnote_file_new_tab: bool,
     ) {
+        self.open_file_w_dialogs_with_bytes(input_file, None, target_pos, rnote_file_new_tab).await;
+    }
+
+    pub(crate) async fn open_file_w_dialogs_with_bytes(
+        &self,
+        input_file: gio::File,
+        initial_bytes: Option<Vec<u8>>,
+        target_pos: Option<Vector2>,
+        rnote_file_new_tab: bool,
+    ) {
         self.overlays().progressbar_start_pulsing();
         match self
-            .try_open_file(input_file, target_pos, rnote_file_new_tab)
+            .try_open_file(input_file, initial_bytes, target_pos, rnote_file_new_tab)
             .await
         {
             Ok(true) => {
@@ -690,6 +700,7 @@ impl RnAppWindow {
     async fn try_open_file(
         &self,
         input_file: gio::File,
+        initial_bytes: Option<Vec<u8>>,
         target_pos: Option<Vector2>,
         rnote_file_new_tab: bool,
     ) -> anyhow::Result<bool> {
@@ -722,7 +733,10 @@ impl RnAppWindow {
                             (false, Some(active_wrapper)) => (false, active_wrapper),
                         };
 
-                    let bytes = crate::utils::load_file_bytes_future(&input_file).await?;
+                    let bytes = match initial_bytes {
+                        Some(b) => b,
+                        None => crate::utils::load_file_bytes_future(&input_file).await?,
+                    };
                     let widget_flags = wrapper
                         .canvas()
                         .load_in_rnote_bytes(bytes, input_file.path())
@@ -740,7 +754,10 @@ impl RnAppWindow {
                     Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
                     _ => (self.new_canvas_wrapper(), true),
                 };
-                let bytes = crate::utils::load_file_bytes_future(&input_file).await?;
+                let bytes = match initial_bytes {
+                    Some(b) => b,
+                    None => crate::utils::load_file_bytes_future(&input_file).await?,
+                };
                 if is_new {
                     self.append_wrapper_new_tab(&wrapper);
                 }
@@ -756,7 +773,10 @@ impl RnAppWindow {
                     Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
                     _ => (self.new_canvas_wrapper(), true),
                 };
-                let bytes = crate::utils::load_file_bytes_future(&input_file).await?;
+                let bytes = match initial_bytes {
+                    Some(b) => b,
+                    None => crate::utils::load_file_bytes_future(&input_file).await?,
+                };
                 if is_new {
                     self.append_wrapper_new_tab(&wrapper);
                 }
@@ -783,6 +803,7 @@ impl RnAppWindow {
                     &canvas,
                     is_new.then_some(&wrapper),
                     input_file,
+                    initial_bytes,
                     target_pos,
                 )
                 .await?
@@ -792,7 +813,10 @@ impl RnAppWindow {
                     Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
                     _ => (self.new_canvas_wrapper(), true),
                 };
-                let bytes = crate::utils::load_file_bytes_future(&input_file).await?;
+                let bytes = match initial_bytes {
+                    Some(b) => b,
+                    None => crate::utils::load_file_bytes_future(&input_file).await?,
+                };
                 let text = String::from_utf8(bytes)?;
                 if is_new {
                     self.append_wrapper_new_tab(&wrapper);

@@ -1517,6 +1517,20 @@ impl RnCanvas {
                     match value.get::<gdk::FileList>() {
                         Ok(file_list) => {
                             let files = file_list.files();
+                            // Immediately read bytes while macOS performDragOperation actively holds the sandbox extension
+                            let files_with_bytes: Vec<(gio::File, Option<Vec<u8>>)> = files
+                                .into_iter()
+                                .map(|file| {
+                                    let path_opt = file.path().or_else(|| {
+                                        let uri = file.uri();
+                                        url::Url::parse(&uri).ok()?.to_file_path().ok()
+                                    });
+                                    let bytes = path_opt.as_ref().and_then(|p| std::fs::read(p).ok())
+                                        .or_else(|| file.load_bytes(None::<&gio::Cancellable>).ok().map(|(b, _)| b.to_vec()));
+                                    (file, bytes)
+                                })
+                                .collect();
+
                             // Schedule on the global default MainContext via idle_add_local_once.
                             // On macOS, `-[GdkMacosWindow performDragOperation:]` pushes a temporary
                             // thread-default GMainContext that is destroyed as soon as the drop returns,
@@ -1526,9 +1540,9 @@ impl RnCanvas {
                                 appwindow,
                                 move || {
                                     glib::MainContext::default().spawn_local(async move {
-                                        for file in files {
+                                        for (file, bytes) in files_with_bytes {
                                             appwindow
-                                                .open_file_w_dialogs(file, Some(pos), true)
+                                                .open_file_w_dialogs_with_bytes(file, bytes, Some(pos), true)
                                                 .await;
                                         }
                                     });
@@ -1547,12 +1561,19 @@ impl RnCanvas {
                     // In some scenarios, get() can fail with `UnexpectedNone` even though is() returned true, e.g. when dealing with trashed files.
                     match value.get::<gio::File>() {
                         Ok(file) => {
+                            let path_opt = file.path().or_else(|| {
+                                let uri = file.uri();
+                                url::Url::parse(&uri).ok()?.to_file_path().ok()
+                            });
+                            let bytes = path_opt.as_ref().and_then(|p| std::fs::read(p).ok())
+                                .or_else(|| file.load_bytes(None::<&gio::Cancellable>).ok().map(|(b, _)| b.to_vec()));
+
                             glib::idle_add_local_once(clone!(
                                 #[weak]
                                 appwindow,
                                 move || {
                                     glib::MainContext::default().spawn_local(async move {
-                                        appwindow.open_file_w_dialogs(file, Some(pos), true).await;
+                                        appwindow.open_file_w_dialogs_with_bytes(file, bytes, Some(pos), true).await;
                                     });
                                 }
                             ));

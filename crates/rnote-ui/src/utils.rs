@@ -26,20 +26,39 @@ where
 }
 
 /// Loads the content of a `gio::File` into bytes asynchronously.
-/// When the file points to a local filesystem path, this uses `std::fs::read` on a worker thread
-/// to avoid GIO/GVfs daemon timeouts, D-Bus portal delays, or sandbox permission blocks.
+/// When the file points to a local filesystem path, this uses direct `std::fs::read` on the current thread
+/// first to preserve macOS sandbox/TCC extensions and avoid GIO/GVfs daemon timeouts.
 pub(crate) async fn load_file_bytes_future(file: &gio::File) -> anyhow::Result<Vec<u8>> {
-    if let Some(path) = file.path() {
-        let path_clone = path.clone();
-        match blocking::unblock(move || std::fs::read(&path_clone)).await {
+    let file_path = file.path().or_else(|| {
+        let uri = file.uri();
+        if let Ok(parsed_url) = url::Url::parse(&uri) {
+            parsed_url.to_file_path().ok()
+        } else {
+            None
+        }
+    });
+
+    if let Some(ref path) = file_path {
+        // Direct read on current thread first (retains security-scoped bookmark context on macOS)
+        match std::fs::read(path) {
             Ok(bytes) => return Ok(bytes),
             Err(e) => {
                 tracing::warn!(
-                    "Direct filesystem read for '{path:?}' failed ({e}), falling back to GIO."
+                    "Direct synchronous read for '{path:?}' failed ({e}), trying background thread..."
                 );
+                let path_clone = path.clone();
+                if let Ok(bytes) = blocking::unblock(move || std::fs::read(&path_clone)).await {
+                    return Ok(bytes);
+                }
             }
         }
     }
+
+    // Try synchronous GIO load_bytes on current thread before async GIO daemon
+    if let Ok((bytes, _)) = file.load_bytes(None::<&gio::Cancellable>) {
+        return Ok(bytes.to_vec());
+    }
+
     let (bytes, _) = file.load_bytes_future().await?;
     Ok(bytes.to_vec())
 }

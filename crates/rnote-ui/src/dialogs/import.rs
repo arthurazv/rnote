@@ -329,9 +329,14 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     canvas: &RnCanvas,
     pending_new_wrapper: Option<&crate::RnCanvasWrapper>,
     input_file: gio::File,
+    initial_bytes: Option<Vec<u8>>,
     target_pos: Option<Vector2>,
 ) -> anyhow::Result<bool> {
-    let pdf_data = Arc::new(crate::utils::load_file_bytes_future(&input_file).await?);
+    let pdf_bytes = match initial_bytes {
+        Some(b) => b,
+        None => crate::utils::load_file_bytes_future(&input_file).await?,
+    };
+    let pdf_data = Arc::new(pdf_bytes);
     let (pdf, password, cancel) =
         pdf_encryption_check_and_dialog(appwindow, &input_file, pdf_data.clone()).await;
     if cancel {
