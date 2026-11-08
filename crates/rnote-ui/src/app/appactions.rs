@@ -118,6 +118,7 @@ impl RnApp {
         edit_clipboard.append(Some("Cut"), Some("win.clipboard-cut"));
         edit_clipboard.append(Some("Copy"), Some("win.clipboard-copy"));
         edit_clipboard.append(Some("Copy as Text"), Some("win.copy-text"));
+        edit_clipboard.append(Some("Send to Resolution Notebook"), Some("win.send-to-notebook"));
         edit_clipboard.append(Some("Paste"), Some("win.clipboard-paste"));
         edit_clipboard.append(Some("Select All"), Some("win.selection-select-all"));
         edit_menu.append_section(None, &edit_clipboard);

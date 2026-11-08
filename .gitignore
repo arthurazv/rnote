@@ -10,3 +10,5 @@
 *.mo
 .toggletasks.json
 *.flatpak
+*.dmg
+_build/

@@ -588,9 +588,12 @@ impl Selector {
                         && bounds.extents()[0] >= 5.0
                         && bounds.extents()[1] >= 5.0
                     {
+                        let scale = engine_view.camera.scale_factor();
                         if let Some((_, flags)) = engine_view.store.generate_area_snippet_clipboard(
                             engine_view.document.config.background,
                             bounds,
+                            Some(scale),
+                            true,
                         ) {
                             widget_flags |= flags;
                             self.state = SelectorState::AreaSelected { bounds };

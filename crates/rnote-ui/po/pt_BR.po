@@ -3255,3 +3255,19 @@ msgstr "Recorte copiado para a área de transferência"
 
 msgid "Snippet copied to clipboard! Paste with ⌘V"
 msgstr "Recorte copiado para a área de transferência! Cole com ⌘V"
+
+msgid "Caderno de Resoluções"
+msgstr "Caderno de Resoluções"
+
+msgid "Send to Resolution Notebook"
+msgstr "Enviar para Caderno de Resoluções"
+
+msgid "Enviado para o Caderno de Resoluções! (⌘E)"
+msgstr "Enviado para o Caderno de Resoluções! (⌘E)"
+
+msgid "Select an area or question first!"
+msgstr "Selecione uma área ou questão primeiro!"
+
+msgid "Text recognized (OCR)"
+msgstr "Texto reconhecido (OCR)"
+

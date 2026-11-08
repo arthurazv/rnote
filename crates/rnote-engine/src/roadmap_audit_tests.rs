@@ -568,4 +568,43 @@ mod tests {
             "Escape must clear the area selection back to Idle"
         );
     }
+
+    #[test]
+    fn test_image_auto_threshold_cleanup() {
+        use crate::image::{Image, ImageMemoryFormat};
+        use rnote_compose::shapes::Rectangle;
+
+        // 3 pixels:
+        // 1: Paper tint (grayish-yellow, lum ~225 >= 216 WHITE_POINT)
+        // 2: Dark ink (lum ~30 <= 45 BLACK_POINT)
+        // 3: Intermediate midtone (lum ~120)
+        let pixels: Vec<u8> = vec![
+            225, 225, 225, 255, // pixel 1
+            30, 30, 30, 255,    // pixel 2
+            120, 120, 120, 255, // pixel 3
+        ];
+
+        let mut image = Image {
+            rectangle: Rectangle::from_corners(Vector2::ZERO, Vector2::new(3.0, 1.0)),
+            data: glib::Bytes::from_owned(pixels),
+            pixel_width: 3,
+            pixel_height: 1,
+            memory_format: ImageMemoryFormat::R8g8b8a8Premultiplied,
+        };
+
+        image.apply_auto_threshold_cleanup(false);
+
+        let cleaned = image.data.as_ref();
+        // Pixel 1 (background) must be clipped to pure white
+        assert_eq!(cleaned[0], 255, "White point clipping must yield R=255");
+        assert_eq!(cleaned[1], 255, "White point clipping must yield G=255");
+        assert_eq!(cleaned[2], 255, "White point clipping must yield B=255");
+        assert_eq!(cleaned[3], 255, "White point clipping must yield A=255");
+
+        // Pixel 2 (dark ink) must be deepened to pure black
+        assert_eq!(cleaned[4], 0, "Black point clipping must yield R=0");
+        assert_eq!(cleaned[5], 0, "Black point clipping must yield G=0");
+        assert_eq!(cleaned[6], 0, "Black point clipping must yield B=0");
+        assert_eq!(cleaned[7], 255, "Dark ink alpha preserved");
+    }
 }

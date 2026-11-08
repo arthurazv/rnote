@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, Cursor};
 
 #[non_exhaustive]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImageMemoryFormat {
     R8g8b8a8Premultiplied,
 }
@@ -169,6 +169,63 @@ impl Transformable for Image {
 }
 
 impl Image {
+    /// Applies white-point normalization and background cleanup to remove grayish/yellowish
+    /// scanner noise from scanned document pages or exam papers.
+    pub fn apply_auto_threshold_cleanup(&mut self, make_transparent: bool) {
+        if self.memory_format != ImageMemoryFormat::R8g8b8a8Premultiplied {
+            return;
+        }
+        let mut pixels = self.data.to_vec();
+        for chunk in pixels.chunks_exact_mut(4) {
+            let r = chunk[0] as f32;
+            let g = chunk[1] as f32;
+            let b = chunk[2] as f32;
+            let a = chunk[3] as f32;
+
+            if a > 0.0 {
+                let un_r = (r * 255.0 / a).clamp(0.0, 255.0);
+                let un_g = (g * 255.0 / a).clamp(0.0, 255.0);
+                let un_b = (b * 255.0 / a).clamp(0.0, 255.0);
+
+                // Perceptual luminance (BT.601)
+                let lum = 0.299 * un_r + 0.587 * un_g + 0.114 * un_b;
+
+                const WHITE_POINT: f32 = 216.0;
+                const BLACK_POINT: f32 = 45.0;
+
+                if lum >= WHITE_POINT {
+                    if make_transparent {
+                        chunk[0] = 0;
+                        chunk[1] = 0;
+                        chunk[2] = 0;
+                        chunk[3] = 0;
+                    } else {
+                        chunk[0] = 255;
+                        chunk[1] = 255;
+                        chunk[2] = 255;
+                        chunk[3] = 255;
+                    }
+                } else if lum <= BLACK_POINT {
+                    chunk[0] = 0;
+                    chunk[1] = 0;
+                    chunk[2] = 0;
+                    chunk[3] = a as u8;
+                } else {
+                    let norm = ((lum - BLACK_POINT) / (WHITE_POINT - BLACK_POINT)).clamp(0.0, 1.0);
+                    let factor = norm * 255.0 / lum.max(1.0);
+                    let new_r = (un_r * factor).clamp(0.0, 255.0);
+                    let new_g = (un_g * factor).clamp(0.0, 255.0);
+                    let new_b = (un_b * factor).clamp(0.0, 255.0);
+
+                    chunk[0] = ((new_r * a) / 255.0) as u8;
+                    chunk[1] = ((new_g * a) / 255.0) as u8;
+                    chunk[2] = ((new_b * a) / 255.0) as u8;
+                }
+            }
+        }
+        self.data = glib::Bytes::from_owned(pixels);
+    }
+
     pub fn assert_valid(&self) -> anyhow::Result<()> {
         self.rectangle.bounds().assert_valid()?;
 

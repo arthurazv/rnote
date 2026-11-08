@@ -896,6 +896,8 @@ impl StrokeStore {
         &self,
         background: crate::document::Background,
         bounds: Aabb,
+        scale_factor: Option<f64>,
+        auto_threshold: bool,
     ) -> Option<(Vec<(Vec<u8>, String)>, WidgetFlags)> {
         let mut widget_flags = WidgetFlags::default();
         let keys = self.stroke_keys_as_rendered_intersecting_bounds(bounds);
@@ -904,9 +906,9 @@ impl StrokeStore {
             .with_background(background)
             .with_bounds(bounds);
 
-        let image_scale = 2.0;
+        let image_scale = scale_factor.unwrap_or(2.0).clamp(1.0, 3.0);
 
-        let cropped_image = crate::Image::gen_with_cairo(
+        let mut cropped_image = crate::Image::gen_with_cairo(
             |cairo_cx| {
                 stroke_content.draw_to_cairo(
                     cairo_cx,
@@ -920,6 +922,10 @@ impl StrokeStore {
             bounds,
             image_scale,
         ).ok()?;
+
+        if auto_threshold {
+            cropped_image.apply_auto_threshold_cleanup(false);
+        }
 
         let png_bytes = cropped_image
             .clone()

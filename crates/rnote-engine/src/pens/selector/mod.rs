@@ -183,9 +183,12 @@ impl PenBehaviour for Selector {
         let mut clipboard_content = Vec::with_capacity(1);
 
         let area_clipboard = if let SelectorState::AreaSelected { bounds } = &self.state {
+            let scale = engine_view.camera.scale_factor();
             engine_view.store.generate_area_snippet_clipboard(
                 engine_view.document.config.background,
                 *bounds,
+                Some(scale),
+                true,
             )
         } else {
             None
@@ -275,9 +278,12 @@ impl PenBehaviour for Selector {
         let mut clipboard_content = Vec::with_capacity(1);
 
         let area_cut = if let SelectorState::AreaSelected { bounds } = &self.state {
+            let scale = engine_view.camera.scale_factor();
             let clip = engine_view.store.generate_area_snippet_clipboard(
                 engine_view.document.config.background,
                 *bounds,
+                Some(scale),
+                true,
             );
             self.state = SelectorState::Idle;
             widget_flags.redraw = true;

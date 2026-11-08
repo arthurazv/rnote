@@ -135,6 +135,8 @@ impl RnAppWindow {
         self.add_action(&action_clipboard_copy);
         let action_copy_text = gio::SimpleAction::new("copy-text", None);
         self.add_action(&action_copy_text);
+        let action_send_to_notebook = gio::SimpleAction::new("send-to-notebook", None);
+        self.add_action(&action_send_to_notebook);
         let action_clipboard_cut = gio::SimpleAction::new("clipboard-cut", None);
         self.add_action(&action_clipboard_cut);
         let action_clipboard_paste = gio::SimpleAction::new("clipboard-paste", None);
@@ -1292,6 +1294,7 @@ impl RnAppWindow {
             }));
         }));
 
+
         // Copy as Text
         action_copy_text.connect_activate(clone!(#[weak(rename_to=appwindow)] self, move |_, _| {
             glib::spawn_future_local(clone!(#[weak] appwindow, async move {
@@ -1313,9 +1316,35 @@ impl RnAppWindow {
                         return;
                     }
                 }
+
+                // Fallback to local Apple Vision OCR for scanned PDFs, images, or diagram text
+                let receiver = canvas.engine_ref().fetch_clipboard_content();
+                if let Ok(Ok((content, _))) = receiver.await {
+                    if let Some((png_bytes, _)) = content.iter().find(|(_, mime)| mime == "image/png") {
+                        if let Some(ocr_text) = crate::appwindow::macos_vision_recognize_text(png_bytes) {
+                            if !ocr_text.trim().is_empty() {
+                                appwindow.clipboard().set_text(&ocr_text);
+                                let preview: String = ocr_text.chars().take(35).collect();
+                                let msg = format!("{}: \"{preview}...\"", gettext("Text recognized (OCR)"));
+                                appwindow.overlays().dispatch_toast_text(&msg, Some(std::time::Duration::from_secs(3)));
+                                return;
+                            }
+                        }
+                    }
+                }
+
                 appwindow.overlays().dispatch_toast_text(&gettext("No text found in selection"), Some(std::time::Duration::from_secs(2)));
             }));
         }));
+
+        // Send to Resolution Notebook
+        action_send_to_notebook.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                appwindow.send_active_selection_to_resolution_notebook();
+            }
+        ));
 
         // Clipboard cut
         action_clipboard_cut.connect_activate(clone!(#[weak(rename_to=appwindow)] self, move |_, _| {
@@ -1347,6 +1376,7 @@ impl RnAppWindow {
                 appwindow.handle_widget_flags(widget_flags, &canvas);
             }));
         }));
+
 
         // Clipboard paste
         action_clipboard_paste.connect_activate(clone!(
@@ -1444,6 +1474,7 @@ impl RnAppWindow {
             app.set_accels_for_action("win.search", &["<Meta>f", "<Primary>f", "<Ctrl>f"]);
             app.set_accels_for_action("win.clipboard-copy", &["<Meta>c", "<Primary>c", "<Ctrl>c"]);
             app.set_accels_for_action("win.copy-text", &["<Meta><Shift>c", "<Primary><Shift>c", "<Ctrl><Shift>c", "<Meta><Alt>c"]);
+            app.set_accels_for_action("win.send-to-notebook", &["<Meta>e", "<Primary>e", "<Ctrl>e"]);
             app.set_accels_for_action("win.clipboard-cut", &["<Meta>x", "<Primary>x", "<Ctrl>x"]);
             app.set_accels_for_action("win.clipboard-paste", &["<Meta>v", "<Primary>v", "<Ctrl>v"]);
             app.set_accels_for_action("win.selection-select-all", &["<Meta>a", "<Primary>a", "<Ctrl>a"]);
@@ -1508,6 +1539,7 @@ impl RnAppWindow {
             app.set_accels_for_action("win.search", &["<Primary>f", "<Ctrl>f"]);
             app.set_accels_for_action("win.clipboard-copy", &["<Primary>c", "<Ctrl>c"]);
             app.set_accels_for_action("win.copy-text", &["<Primary><Shift>c", "<Ctrl><Shift>c", "<Primary><Alt>c"]);
+            app.set_accels_for_action("win.send-to-notebook", &["<Primary>e", "<Ctrl>e"]);
             app.set_accels_for_action("win.clipboard-cut", &["<Primary>x", "<Ctrl>x"]);
             app.set_accels_for_action("win.clipboard-paste", &["<Primary>v", "<Ctrl>v"]);
             app.set_accels_for_action("win.selection-select-all", &["<Primary>a", "<Ctrl>a"]);
