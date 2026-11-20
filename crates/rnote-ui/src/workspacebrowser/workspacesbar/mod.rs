@@ -282,6 +282,27 @@ impl RnWorkspacesBar {
             }
         }
 
+        #[cfg(target_os = "macos")]
+        {
+            let docs_rnote = glib::user_special_dir(glib::UserDirectory::Documents)
+                .map(|d| d.join("Rnote"))
+                .unwrap_or_else(|| glib::home_dir().join("Documents/Rnote"));
+            let _ = std::fs::create_dir_all(&docs_rnote);
+            let docs_rnote_str = docs_rnote.to_string_lossy().to_string();
+
+            // On macOS, never let a workspace point to root "/" or "./"
+            for entry in &workspace_list.iter() {
+                let d = std::path::PathBuf::from(entry.dir());
+                if d == std::path::Path::new("/")
+                    || d == std::path::Path::new("./")
+                    || d == std::path::Path::new(".")
+                {
+                    entry.set_dir(docs_rnote_str.clone());
+                    entry.set_name(String::from("Rnote"));
+                }
+            }
+        }
+
         self.imp().workspace_list.replace_self(workspace_list);
         self.select_workspace_by_index(selected_workspace_index);
     }

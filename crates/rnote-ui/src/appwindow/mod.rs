@@ -620,9 +620,20 @@ impl RnAppWindow {
         target_pos: Option<Vector2>,
         rnote_file_new_tab: bool,
     ) {
+        self.open_file_w_dialogs_with_bytes(input_file, None, target_pos, rnote_file_new_tab)
+            .await;
+    }
+
+    pub(crate) async fn open_file_w_dialogs_with_bytes(
+        &self,
+        input_file: gio::File,
+        initial_bytes: Option<Vec<u8>>,
+        target_pos: Option<Vector2>,
+        rnote_file_new_tab: bool,
+    ) {
         self.overlays().progressbar_start_pulsing();
         match self
-            .try_open_file(input_file, target_pos, rnote_file_new_tab)
+            .try_open_file(input_file, initial_bytes, target_pos, rnote_file_new_tab)
             .await
         {
             Ok(true) => {
@@ -647,6 +658,7 @@ impl RnAppWindow {
     async fn try_open_file(
         &self,
         input_file: gio::File,
+        initial_bytes: Option<Vec<u8>>,
         target_pos: Option<Vector2>,
         rnote_file_new_tab: bool,
     ) -> anyhow::Result<bool> {
@@ -679,10 +691,13 @@ impl RnAppWindow {
                             (false, Some(active_wrapper)) => (false, active_wrapper),
                         };
 
-                    let (bytes, _) = input_file.load_bytes_future().await?;
+                    let bytes = match initial_bytes {
+                        Some(b) => b,
+                        None => crate::utils::load_file_bytes_future(&input_file).await?,
+                    };
                     let widget_flags = wrapper
                         .canvas()
-                        .load_in_rnote_bytes(bytes.to_vec(), input_file.path())
+                        .load_in_rnote_bytes(bytes, input_file.path())
                         .await?;
                     if rnote_file_new_tab {
                         self.append_wrapper_new_tab(&wrapper);
@@ -697,9 +712,12 @@ impl RnAppWindow {
                     .active_tab_wrapper()
                     .ok_or_else(|| anyhow::anyhow!("No active tab to import into"))?
                     .canvas();
-                let (bytes, _) = input_file.load_bytes_future().await?;
+                let bytes = match initial_bytes {
+                    Some(b) => b,
+                    None => crate::utils::load_file_bytes_future(&input_file).await?,
+                };
                 canvas
-                    .load_in_vectorimage_bytes(bytes.to_vec(), target_pos, self.respect_borders())
+                    .load_in_vectorimage_bytes(bytes, target_pos, self.respect_borders())
                     .await?;
                 true
             }
@@ -708,9 +726,12 @@ impl RnAppWindow {
                     .active_tab_wrapper()
                     .ok_or_else(|| anyhow::anyhow!("No active tab to import into"))?
                     .canvas();
-                let (bytes, _) = input_file.load_bytes_future().await?;
+                let bytes = match initial_bytes {
+                    Some(b) => b,
+                    None => crate::utils::load_file_bytes_future(&input_file).await?,
+                };
                 canvas
-                    .load_in_bitmapimage_bytes(bytes.to_vec(), target_pos, self.respect_borders())
+                    .load_in_bitmapimage_bytes(bytes, target_pos, self.respect_borders())
                     .await?;
                 true
             }
@@ -730,16 +751,25 @@ impl RnAppWindow {
                     .active_tab_wrapper()
                     .ok_or_else(|| anyhow::anyhow!("No active tab to import into"))?
                     .canvas();
-                dialogs::import::dialog_import_pdf_w_prefs(self, &canvas, input_file, target_pos)
-                    .await?
+                dialogs::import::dialog_import_pdf_w_prefs(
+                    self,
+                    &canvas,
+                    input_file,
+                    initial_bytes,
+                    target_pos,
+                )
+                .await?
             }
             FileType::PlaintextFile => {
                 let canvas = self
                     .active_tab_wrapper()
                     .ok_or_else(|| anyhow::anyhow!("No active tab to import into"))?
                     .canvas();
-                let (bytes, _) = input_file.load_bytes_future().await?;
-                canvas.load_in_text(String::from_utf8(bytes.to_vec())?, target_pos)?;
+                let bytes = match initial_bytes {
+                    Some(b) => b,
+                    None => crate::utils::load_file_bytes_future(&input_file).await?,
+                };
+                canvas.load_in_text(String::from_utf8(bytes)?, target_pos)?;
                 true
             }
             FileType::Folder => {

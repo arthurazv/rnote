@@ -8,14 +8,17 @@ pub(crate) use colorsetter::RnColorSetter;
 
 // Imports
 use crate::RnAppWindow;
+#[cfg(not(target_os = "macos"))]
+use gtk4::ColorDialog;
 use gtk4::{
-    Button, ColorDialog, CompositeTemplate, Label, Widget, gdk, glib, glib::clone, prelude::*,
+    Button, CompositeTemplate, Label, Widget, gdk, glib, glib::clone, prelude::*,
     subclass::prelude::*,
 };
 use once_cell::sync::Lazy;
 use rnote_compose::{Color, color};
 use rnote_engine::ext::GdkRGBAExt;
 use std::cell::RefCell;
+#[cfg(not(target_os = "macos"))]
 use tracing::debug;
 
 mod imp {
@@ -26,6 +29,7 @@ mod imp {
     pub(crate) struct RnColorPicker {
         pub(crate) stroke_color: RefCell<gdk::RGBA>,
         pub(crate) fill_color: RefCell<gdk::RGBA>,
+        #[cfg(not(target_os = "macos"))]
         pub(crate) color_dialog: glib::WeakRef<ColorDialog>,
 
         #[template_child]
@@ -67,6 +71,7 @@ mod imp {
                     *super::STROKE_COLOR_DEFAULT,
                 )),
                 fill_color: RefCell::new(gdk::RGBA::from_compose_color(*super::FILL_COLOR_DEFAULT)),
+                #[cfg(not(target_os = "macos"))]
                 color_dialog: glib::WeakRef::new(),
 
                 active_colors_box: TemplateChild::default(),
@@ -492,35 +497,133 @@ impl RnColorPicker {
     }
 
     pub(crate) fn init(&self, appwindow: &RnAppWindow) {
-        self.imp().colordialog_button.connect_clicked(
-            clone!(#[weak(rename_to=colorpicker)] self, #[weak] appwindow , move |_| {
-                if colorpicker.imp().color_dialog.upgrade().is_some() {
-                    // Unfortunately Gtk currently does not have API to make the dialog the active window.
-                } else {
-                    glib::spawn_future_local(clone!(#[weak] colorpicker, #[weak] appwindow , async move {
-                        let dialog = ColorDialog::builder().modal(false).with_alpha(true).build();
-                        colorpicker.imp().color_dialog.set(Some(&dialog));
+        #[cfg(target_os = "macos")]
+        {
+            let _ = &appwindow;
+            #[allow(deprecated)]
+            let chooser = gtk4::ColorChooserWidget::builder()
+                .use_alpha(true)
+                .show_editor(false)
+                .build();
 
-                        let active_color = if colorpicker.stroke_color_pad_active() {
-                            colorpicker.stroke_color()
-                        } else {
-                            colorpicker.fill_color()
-                        };
-                        match dialog.choose_rgba_future(Some(&appwindow), Some(&active_color)).await {
-                            Ok(new_color) => {
-                                colorpicker.set_color_active_pad(new_color);
-                                colorpicker.set_color_active_setter(new_color);
-                            },
-                            // this reports as error if the dialog is dismissed by the user.
-                            // The API is a bit odd, expected would be Result<Option<RGBA>>
-                            Err(e) => debug!("Did not choose new color (Error or dialog dismissed by user), Err: {e:?}"),
-                        }
+            let cancel_btn = Button::with_label(&gettextrs::gettext("Cancel"));
+            let select_btn = Button::with_label(&gettextrs::gettext("Select"));
+            select_btn.add_css_class("suggested-action");
 
-                        colorpicker.imp().color_dialog.set(None);
-                    }));
+            let actions_box = gtk4::Box::builder()
+                .orientation(gtk4::Orientation::Horizontal)
+                .spacing(6)
+                .halign(gtk4::Align::End)
+                .build();
+            actions_box.append(&cancel_btn);
+            actions_box.append(&select_btn);
+
+            let content_box = gtk4::Box::builder()
+                .orientation(gtk4::Orientation::Vertical)
+                .spacing(8)
+                .margin_top(10)
+                .margin_bottom(10)
+                .margin_start(10)
+                .margin_end(10)
+                .build();
+            content_box.append(&chooser);
+            content_box.append(&actions_box);
+
+            let popover = gtk4::Popover::builder()
+                .child(&content_box)
+                .autohide(true)
+                .build();
+            popover.set_parent(&*self.imp().colordialog_button);
+
+            cancel_btn.connect_clicked(clone!(
+                #[weak]
+                popover,
+                move |_| {
+                    popover.popdown();
                 }
-            }),
-        );
+            ));
+
+            select_btn.connect_clicked(clone!(
+                #[weak(rename_to=colorpicker)]
+                self,
+                #[weak]
+                chooser,
+                #[weak]
+                popover,
+                move |_| {
+                    #[allow(deprecated)]
+                    let new_color = chooser.rgba();
+                    colorpicker.set_color_active_pad(new_color);
+                    colorpicker.set_color_active_setter(new_color);
+                    popover.popdown();
+                }
+            ));
+
+            #[allow(deprecated)]
+            chooser.connect_color_activated(clone!(
+                #[weak(rename_to=colorpicker)]
+                self,
+                #[weak]
+                popover,
+                move |_, new_color| {
+                    colorpicker.set_color_active_pad(*new_color);
+                    colorpicker.set_color_active_setter(*new_color);
+                    popover.popdown();
+                }
+            ));
+
+            self.imp().colordialog_button.connect_clicked(clone!(
+                #[weak(rename_to=colorpicker)]
+                self,
+                #[weak]
+                chooser,
+                #[weak]
+                popover,
+                move |_| {
+                    let active_color = if colorpicker.stroke_color_pad_active() {
+                        colorpicker.stroke_color()
+                    } else {
+                        colorpicker.fill_color()
+                    };
+                    #[allow(deprecated)]
+                    chooser.set_rgba(&active_color);
+                    popover.popup();
+                }
+            ));
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.imp().colordialog_button.connect_clicked(
+                clone!(#[weak(rename_to=colorpicker)] self, #[weak] appwindow , move |_| {
+                    if colorpicker.imp().color_dialog.upgrade().is_some() {
+                        // Unfortunately Gtk currently does not have API to make the dialog the active window.
+                    } else {
+                        glib::spawn_future_local(clone!(#[weak] colorpicker, #[weak] appwindow , async move {
+                            let dialog = ColorDialog::builder().modal(false).with_alpha(true).build();
+                            colorpicker.imp().color_dialog.set(Some(&dialog));
+
+                            let active_color = if colorpicker.stroke_color_pad_active() {
+                                colorpicker.stroke_color()
+                            } else {
+                                colorpicker.fill_color()
+                            };
+                            match dialog.choose_rgba_future(Some(&appwindow), Some(&active_color)).await {
+                                Ok(new_color) => {
+                                    colorpicker.set_color_active_pad(new_color);
+                                    colorpicker.set_color_active_setter(new_color);
+                                },
+                                // this reports as error if the dialog is dismissed by the user.
+                                // The API is a bit odd, expected would be Result<Option<RGBA>>
+                                Err(e) => debug!("Did not choose new color (Error or dialog dismissed by user), Err: {e:?}"),
+                            }
+
+                            colorpicker.imp().color_dialog.set(None);
+                        }));
+                    }
+                }),
+            );
+        }
     }
 
     fn set_color_active_setter(&self, color: gdk::RGBA) {

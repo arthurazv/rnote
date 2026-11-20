@@ -75,7 +75,16 @@ pub(crate) async fn filedialog_open_doc(appwindow: &RnAppWindow) {
         .default_filter(&filter)
         .build();
 
-    if let Some(current_workspace_dir) = appwindow.sidebar().workspacebrowser().dir_list_dir() {
+    if let Some(current_workspace_dir) = appwindow
+        .sidebar()
+        .workspacebrowser()
+        .dir_list_dir()
+        .filter(|d| {
+            d != std::path::Path::new("/")
+                && d != std::path::Path::new(".")
+                && d != std::path::Path::new("./")
+        })
+    {
         filedialog.set_initial_folder(Some(&gio::File::for_path(current_workspace_dir)));
     }
 
@@ -283,9 +292,14 @@ pub(crate) async fn dialog_import_pdf_w_prefs(
     appwindow: &RnAppWindow,
     canvas: &RnCanvas,
     input_file: gio::File,
+    initial_bytes: Option<Vec<u8>>,
     target_pos: Option<Vector2>,
 ) -> anyhow::Result<bool> {
-    let pdf_data = Arc::new(input_file.load_bytes_future().await?.0.to_vec());
+    let pdf_bytes = match initial_bytes {
+        Some(b) => b,
+        None => crate::utils::load_file_bytes_future(&input_file).await?,
+    };
+    let pdf_data = Arc::new(pdf_bytes);
     let (pdf, password, cancel) =
         pdf_encryption_check_and_dialog(appwindow, &input_file, pdf_data.clone()).await;
     if cancel {
@@ -640,8 +654,8 @@ pub(crate) async fn dialog_import_xopp_w_prefs(
             }
             if confirm {
                 appwindow.overlays().progressbar_start_pulsing();
-                let (bytes, _) = input_file.load_bytes_future().await?;
-                canvas.load_in_xopp_bytes(appwindow, bytes.to_vec()).await?;
+                let bytes = crate::utils::load_file_bytes_future(&input_file).await?;
+                canvas.load_in_xopp_bytes(appwindow, bytes).await?;
                 Ok(true)
             } else {
                 Ok(false)

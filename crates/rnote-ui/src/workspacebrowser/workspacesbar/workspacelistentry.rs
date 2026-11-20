@@ -27,6 +27,20 @@ mod imp {
 
     impl Default for RnWorkspaceListEntryInner {
         fn default() -> Self {
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(doc_dir) = glib::user_special_dir(glib::UserDirectory::Documents) {
+                    let rnote_dir = doc_dir.join("Rnote");
+                    let _ = std::fs::create_dir_all(&rnote_dir);
+                    return Self {
+                        dir: rnote_dir,
+                        icon: String::from("workspacelistentryicon-folder-symbolic"),
+                        color: super::RnWorkspaceListEntry::COLOR_DEFAULT.as_rgba_u32(),
+                        name: String::from("Rnote"),
+                    };
+                }
+            }
+
             let dir = std::env::home_dir().unwrap_or_else(|| {
                 if cfg!(target_os = "windows") {
                     PathBuf::from("C:\\")

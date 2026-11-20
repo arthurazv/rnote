@@ -1152,6 +1152,11 @@ fn get_initial_folder_for_export(appwindow: &RnAppWindow, canvas: &RnCanvas) -> 
                 .sidebar()
                 .workspacebrowser()
                 .dir_list_dir()
+                .filter(|d| {
+                    d != std::path::Path::new("/")
+                        && d != std::path::Path::new(".")
+                        && d != std::path::Path::new("./")
+                })
                 .map(gio::File::for_path)
         })
 }

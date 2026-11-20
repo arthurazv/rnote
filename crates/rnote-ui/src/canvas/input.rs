@@ -38,7 +38,12 @@ pub(crate) fn handle_pointer_controller_event(
     //std::thread::sleep(std::time::Duration::from_millis(100));
     //super::input::debug_gdk_event(event);
 
-    if reject_pointer_input(event, touch_drawing) {
+    if !is_stylus && stylus_active && event_is_touch_or_hand(event) {
+        // Palm/touch rejection: never let a hand/finger touch draw or steal focus while stylus is active
+        return (glib::Propagation::Proceed, pen_state, stylus_active);
+    }
+
+    if !is_stylus && reject_pointer_input(event, touch_drawing) {
         return (glib::Propagation::Proceed, pen_state, stylus_active);
     }
 
@@ -48,7 +53,7 @@ pub(crate) fn handle_pointer_controller_event(
     if is_stylus {
         stylus_active = gdk_event_type != gdk::EventType::ProximityOut;
     } else if stylus_active {
-        // A deliberate mouse click hands control back to the mouse.
+        // A deliberate physical mouse click hands control back to the mouse.
         match gdk_event_type {
             gdk::EventType::ButtonPress | gdk::EventType::ButtonRelease => {
                 stylus_active = false;
@@ -322,29 +327,43 @@ fn trace_gdk_event(event: &gdk::Event) {
     );
 }
 
-/// Returns true if input should be rejected
+/// Returns true if input is from a finger/touchscreen/hand rather than a stylus or physical mouse.
+pub(crate) fn event_is_touch_or_hand(event: &gdk::Event) -> bool {
+    let event_type = event.event_type();
+    event.is_pointer_emulated()
+        || matches!(
+            event_type,
+            gdk::EventType::TouchBegin
+                | gdk::EventType::TouchUpdate
+                | gdk::EventType::TouchEnd
+                | gdk::EventType::TouchCancel
+        )
+        || event
+            .device()
+            .is_some_and(|d| d.source() == gdk::InputSource::Touchscreen)
+}
+
+/// Returns true if input should be rejected from drawing (hand/touch when touch_drawing is off, or multi-touch).
 pub(crate) fn reject_pointer_input(event: &gdk::Event, touch_drawing: bool) -> bool {
+    if event_is_stylus(event) {
+        return false;
+    }
     if touch_drawing {
-        if event.device().unwrap().num_touches() > 1 {
+        if event.device().is_some_and(|d| d.num_touches() > 1) {
             return true;
         }
-    } else {
-        let event_type = event.event_type();
-        if event.is_pointer_emulated()
-            || event_type == gdk::EventType::TouchBegin
-            || event_type == gdk::EventType::TouchUpdate
-            || event_type == gdk::EventType::TouchEnd
-            || event_type == gdk::EventType::TouchCancel
-        {
-            return true;
-        }
+    } else if event_is_touch_or_hand(event) {
+        return true;
     }
     false
 }
 
 fn event_is_stylus(event: &gdk::Event) -> bool {
-    // As in gtk4 'gtkgesturestylus.c:106' we detect if the pointer is a stylus when it has a device tool
+    // Detect stylus via device tool (GTK4 standard) or input source (Pen) for drivers that omit tool on initial events
     event.device_tool().is_some()
+        || event
+            .device()
+            .is_some_and(|d| d.source() == gdk::InputSource::Pen)
 }
 
 fn retrieve_pointer_elements(
@@ -356,9 +375,9 @@ fn retrieve_pointer_elements(
     // Retrieve the transform directly from the event, just like in `gtkgesturestylus.c`'s `get_backlog()`
     let event_native = Native::for_surface(&event.surface()?)?;
     let (surface_trans_x, surface_trans_y) = event_native.surface_transform();
-    // retrieving the pressure only works when the event has a device tool (== is a stylus),
+    // retrieving the pressure only works when the event has a device tool,
     // else we get SIGSEGV when trying to access (TODO: report this to gtk-rs)
-    let is_stylus = event_is_stylus(event);
+    let has_device_tool = event.device_tool().is_some();
     let event_time = event.time();
 
     let mut elements = Vec::with_capacity(1);
@@ -417,7 +436,7 @@ fn retrieve_pointer_elements(
                 axes[crate::utils::axis_use_idx(gdk::AxisUse::X)],
                 axes[crate::utils::axis_use_idx(gdk::AxisUse::Y)],
             ));
-            let pressure = if is_stylus {
+            let pressure = if has_device_tool {
                 axes[crate::utils::axis_use_idx(gdk::AxisUse::Pressure)]
             } else {
                 Element::PRESSURE_DEFAULT
@@ -433,8 +452,8 @@ fn retrieve_pointer_elements(
         .position()
         .map(|(x, y)| transform_pos(Vector2::new(x, y)))?;
 
-    let pressure = if is_stylus {
-        event.axis(gdk::AxisUse::Pressure).unwrap()
+    let pressure = if has_device_tool {
+        event.axis(gdk::AxisUse::Pressure).unwrap_or(Element::PRESSURE_DEFAULT)
     } else {
         Element::PRESSURE_DEFAULT
     };
