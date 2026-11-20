@@ -3,10 +3,9 @@
 Este documento consolida o diagnóstico técnico completo, os arquivos alterados e o guia para implementar as soluções de atalhos e interface do Rnote no macOS.
 
 ## 1. Informações do Ambiente e Repositório
-- **Caminho Local:** `/Users/arthurazv/.gemini/antigravity/scratch/rnote`
-- **Repositório Git:** `git@github.com:arthurazv/rnote.git` (branch `main`)
-- **Instalação Atual:** `/Applications/Rnote.app`
-- **Compilação:** GitHub Actions (`.github/workflows/build_macos.yml`) rodando em runner `macos-14` (Apple Silicon).
+- **Repositório Git:** Fork do Rnote com suporte e melhorias para macOS
+- **Instalação Padrão:** `/Applications/Rnote.app`
+- **Compilação:** GitHub Actions (`.github/workflows/build_macos.yml`) rodando em Apple Silicon / macOS.
 
 ---
 
