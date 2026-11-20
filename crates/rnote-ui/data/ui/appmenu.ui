@@ -72,9 +72,28 @@
             <attribute name="label" translatable="yes">_New</attribute>
             <attribute name="action">win.new-tab</attribute>
           </item>
+          <submenu>
+            <attribute name="label" translatable="yes">New from Template...</attribute>
+            <item>
+              <attribute name="label" translatable="yes">Cornell Notes Template</attribute>
+              <attribute name="action">win.new-tab-cornell</attribute>
+            </item>
+            <item>
+              <attribute name="label" translatable="yes">College Ruled (Lines)</attribute>
+              <attribute name="action">win.new-tab-ruled</attribute>
+            </item>
+            <item>
+              <attribute name="label" translatable="yes">Grid / Math Notebook</attribute>
+              <attribute name="action">win.new-tab-grid</attribute>
+            </item>
+          </submenu>
           <item>
             <attribute name="label" translatable="yes">_Open</attribute>
             <attribute name="action">win.open-doc</attribute>
+          </item>
+          <item>
+            <attribute name="label" translatable="yes">Open in New _Window</attribute>
+            <attribute name="action">win.open-doc-new-window</attribute>
           </item>
           <item>
             <attribute name="label" translatable="yes">_Save</attribute>
@@ -99,6 +118,10 @@
             <item>
               <attribute name="label" translatable="yes">_Copy</attribute>
               <attribute name="action">win.clipboard-copy</attribute>
+            </item>
+            <item>
+              <attribute name="label" translatable="yes">Copy as _Text</attribute>
+              <attribute name="action">win.copy-text</attribute>
             </item>
             <item>
               <attribute name="label" translatable="yes">C_ut</attribute>

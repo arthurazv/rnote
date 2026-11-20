@@ -9,6 +9,13 @@ pub struct RnoteFileMaj0Min15 {
     /// A snapshot of the engine.
     #[serde(rename = "engine_snapshot")]
     pub engine_snapshot: ijson::IValue,
+    /// Optional PNG preview of the first page (base64-encoded) for macOS Quick Look & Finder thumbnails.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "thumbnail_png"
+    )]
+    pub thumbnail_png: Option<String>,
 }
 
 impl TryFrom<RnoteFileMaj0Min13> for RnoteFileMaj0Min15 {
@@ -109,6 +116,7 @@ impl TryFrom<RnoteFileMaj0Min13> for RnoteFileMaj0Min15 {
 
         Ok(Self {
             engine_snapshot: value.engine_snapshot,
+            thumbnail_png: None,
         })
     }
 }

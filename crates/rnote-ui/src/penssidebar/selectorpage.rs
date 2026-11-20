@@ -20,6 +20,8 @@ mod imp {
         #[template_child]
         pub(crate) selectorstyle_intersectingpath_toggle: TemplateChild<ToggleButton>,
         #[template_child]
+        pub(crate) selectorstyle_text_toggle: TemplateChild<ToggleButton>,
+        #[template_child]
         pub(crate) resize_lock_aspectratio_togglebutton: TemplateChild<ToggleButton>,
     }
 
@@ -81,6 +83,8 @@ impl RnSelectorPage {
             Some(SelectorStyle::Single)
         } else if self.imp().selectorstyle_intersectingpath_toggle.is_active() {
             Some(SelectorStyle::IntersectingPath)
+        } else if self.imp().selectorstyle_text_toggle.is_active() {
+            Some(SelectorStyle::Text)
         } else {
             None
         }
@@ -96,6 +100,7 @@ impl RnSelectorPage {
                 .imp()
                 .selectorstyle_intersectingpath_toggle
                 .set_active(true),
+            SelectorStyle::Text => self.imp().selectorstyle_text_toggle.set_active(true),
         }
     }
 
@@ -115,6 +120,7 @@ impl RnSelectorPage {
                     .pens_config
                     .selector_config
                     .style = SelectorStyle::Polygon;
+                appwindow.refresh_ui();
             }
         ));
 
@@ -131,6 +137,7 @@ impl RnSelectorPage {
                     .pens_config
                     .selector_config
                     .style = SelectorStyle::Rectangle;
+                appwindow.refresh_ui();
             }
         ));
 
@@ -147,6 +154,7 @@ impl RnSelectorPage {
                     .pens_config
                     .selector_config
                     .style = SelectorStyle::Single;
+                appwindow.refresh_ui();
             }
         ));
 
@@ -164,6 +172,25 @@ impl RnSelectorPage {
                         .pens_config
                         .selector_config
                         .style = SelectorStyle::IntersectingPath;
+                    appwindow.refresh_ui();
+                }
+            ));
+
+        imp.selectorstyle_text_toggle
+            .connect_toggled(clone!(
+                #[weak]
+                appwindow,
+                move |toggle| {
+                    if !toggle.is_active() {
+                        return;
+                    }
+                    appwindow
+                        .engine_config()
+                        .write()
+                        .pens_config
+                        .selector_config
+                        .style = SelectorStyle::Text;
+                    appwindow.refresh_ui();
                 }
             ));
 

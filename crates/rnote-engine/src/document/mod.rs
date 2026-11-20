@@ -352,7 +352,7 @@ impl Document {
         let pos_snapped_document = snap_to_grid(pos, doc_format_size);
         let pos_snapped_pattern = match pattern_style {
             PatternStyle::None => pos,
-            PatternStyle::Lines => snap_to_line(pos, pattern_size[1]),
+            PatternStyle::Lines | PatternStyle::Cornell => snap_to_line(pos, pattern_size[1]),
             PatternStyle::Grid | PatternStyle::Dots => snap_to_grid(pos, pattern_size),
             PatternStyle::IsometricGrid | PatternStyle::IsometricDots => {
                 snap_to_isometric_pattern(pos, pattern_size[1])

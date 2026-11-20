@@ -428,7 +428,12 @@ impl Stroke {
         };
         let image = Image::try_from_encoded_bytes(&bytes)?;
 
-        Ok(Stroke::BitmapImage(BitmapImage { image, rectangle }))
+        Ok(Stroke::BitmapImage(BitmapImage {
+            image,
+            rectangle,
+            text_runs: Vec::new(),
+            pdf_source: None,
+        }))
     }
 
     pub fn from_xopptext(

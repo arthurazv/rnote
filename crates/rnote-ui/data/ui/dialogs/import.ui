@@ -101,6 +101,37 @@
                       </object>
                     </child>
                     <child>
+                      <object class="AdwComboRow" id="pdf_import_destination_row">
+                        <property name="title" translatable="yes">Destination</property>
+                        <property name="subtitle" translatable="yes">Choose target: Current document, New tab, Each page as tab, or New window</property>
+                        <property name="model">
+                          <object class="GtkStringList">
+                            <items>
+                              <item translatable="yes">New Tab</item>
+                              <item translatable="yes">Current Document</item>
+                              <item translatable="yes">Each Page in a New Tab</item>
+                              <item translatable="yes">New Window</item>
+                            </items>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwComboRow" id="pdf_import_page_format_row">
+                        <property name="title" translatable="yes">Page Format</property>
+                        <property name="subtitle" translatable="yes">Page size for imported document / tabs</property>
+                        <property name="model">
+                          <object class="GtkStringList">
+                            <items>
+                              <item translatable="yes">Original Size</item>
+                              <item translatable="yes">Fixed A4</item>
+                              <item translatable="yes">Custom / Current</item>
+                            </items>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
                       <object class="AdwSwitchRow" id="pdf_import_adjust_document_row">
                         <property name="title" translatable="yes">Adjust Document</property>
                         <property name="subtitle" translatable="yes">Whether the document layout should be adjusted to the Pdf</property>

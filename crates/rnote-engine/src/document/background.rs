@@ -34,6 +34,8 @@ pub enum PatternStyle {
     IsometricGrid,
     #[serde(rename = "isometric_dots")]
     IsometricDots,
+    #[serde(rename = "cornell")]
+    Cornell,
 }
 
 impl Default for PatternStyle {
@@ -97,6 +99,46 @@ fn gen_hline_pattern(
     rect.assign("height", format!("{}px", bounds.extents()[1]));
 
     let group = element::Group::new().add(pattern).add(rect);
+    group.into()
+}
+
+fn gen_cornell_pattern(
+    bounds: Aabb,
+    line_spacing: f64,
+    color: Color,
+    line_width: f64,
+) -> svg::node::element::Element {
+    let mut group = element::Group::new();
+
+    // Horizontal ruled lines
+    group = group.add(gen_hline_pattern(bounds, line_spacing, color, line_width));
+
+    let cue_x = bounds.mins[0] + bounds.extents()[0] * 0.28;
+    let summary_y = bounds.mins[1] + bounds.extents()[1] * 0.82;
+    let sep_width = line_width * 2.2;
+
+    // Vertical cue separator line
+    group = group.add(
+        element::Line::new()
+            .set("stroke-width", sep_width)
+            .set("stroke", color.to_css_color_attr())
+            .set("x1", format!("{}px", cue_x))
+            .set("y1", format!("{}px", bounds.mins[1]))
+            .set("x2", format!("{}px", cue_x))
+            .set("y2", format!("{}px", summary_y)),
+    );
+
+    // Horizontal summary separator line
+    group = group.add(
+        element::Line::new()
+            .set("stroke-width", sep_width)
+            .set("stroke", color.to_css_color_attr())
+            .set("x1", format!("{}px", bounds.mins[0]))
+            .set("y1", format!("{}px", summary_y))
+            .set("x2", format!("{}px", bounds.maxs[0]))
+            .set("y2", format!("{}px", summary_y)),
+    );
+
     group.into()
 }
 
@@ -379,7 +421,9 @@ impl Background {
     pub(crate) fn tile_size(&self) -> Vector2 {
         let pattern_size = match self.pattern {
             PatternStyle::None => Vector2::new(Self::TILE_MAX_SIZE, Self::TILE_MAX_SIZE),
-            PatternStyle::Lines => Vector2::new(Self::TILE_MAX_SIZE, self.pattern_size[1]),
+            PatternStyle::Lines | PatternStyle::Cornell => {
+                Vector2::new(Self::TILE_MAX_SIZE, self.pattern_size[1])
+            }
             PatternStyle::IsometricGrid | PatternStyle::IsometricDots => Vector2::new(
                 calc_width_iso_pattern(self.pattern_size[1]),
                 self.pattern_size[1],
@@ -478,6 +522,14 @@ impl Background {
                         Self::HEXAGON_HEIGHT,
                     ));
                 }
+                PatternStyle::Cornell => {
+                    svg_group = svg_group.add(gen_cornell_pattern(
+                        bounds,
+                        self.pattern_size[1],
+                        pattern_color,
+                        Self::LINE_WIDTH,
+                    ));
+                }
             }
         }
 
@@ -489,7 +541,14 @@ impl Background {
 
     pub(crate) fn gen_tile_image(&self, image_scale: f64) -> Result<Image, anyhow::Error> {
         let tile_bounds = Aabb::new(Vector2::ZERO, self.tile_size());
-        self.gen_svg(tile_bounds, true, false)?
+        // For Cornell notes, the repeating tile only renders the horizontal ruled lines;
+        // the per-page cue margin and summary box are drawn at full page bounds.
+        let mut tile_bg = *self;
+        if tile_bg.pattern == PatternStyle::Cornell {
+            tile_bg.pattern = PatternStyle::Lines;
+        }
+        tile_bg
+            .gen_svg(tile_bounds, true, false)?
             .gen_image(image_scale)
     }
 

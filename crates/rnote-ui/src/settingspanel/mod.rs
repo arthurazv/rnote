@@ -102,6 +102,14 @@ mod imp {
         #[template_child]
         pub(crate) doc_background_color_button: TemplateChild<ColorDialogButton>,
         #[template_child]
+        pub(crate) template_preset_cornell_btn: TemplateChild<Button>,
+        #[template_child]
+        pub(crate) template_preset_ruled_btn: TemplateChild<Button>,
+        #[template_child]
+        pub(crate) template_preset_grid_btn: TemplateChild<Button>,
+        #[template_child]
+        pub(crate) template_preset_blank_btn: TemplateChild<Button>,
+        #[template_child]
         pub(crate) doc_background_patterns_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub(crate) doc_background_pattern_color_button: TemplateChild<ColorDialogButton>,
@@ -1056,6 +1064,16 @@ impl RnSettingsPanel {
                                 .doc_background_pattern_height_unitentry
                                 .set_sensitive(true);
                         }
+                        PatternStyle::Cornell => {
+                            settings_panel
+                                .imp()
+                                .doc_background_pattern_width_unitentry
+                                .set_sensitive(false);
+                            settings_panel
+                                .imp()
+                                .doc_background_pattern_height_unitentry
+                                .set_sensitive(true);
+                        }
                     }
 
                     if canvas.engine_ref().document.config.background.pattern != pattern {
@@ -1067,6 +1085,83 @@ impl RnSettingsPanel {
                     }
                 }
             ));
+
+        // Quick study notebook presets
+        let apply_template_preset = |appwindow: &RnAppWindow,
+                                     settingspanel: &RnSettingsPanel,
+                                     pattern: PatternStyle,
+                                     size: Option<(f64, f64)>| {
+            if let Some(canvas) = appwindow.active_tab_canvas() {
+                {
+                    let mut engine = canvas.engine_mut();
+                    engine.document.config.background.pattern = pattern;
+                    if let Some((w, h)) = size {
+                        engine.document.config.background.pattern_size[0] = w;
+                        engine.document.config.background.pattern_size[1] = h;
+                    }
+                }
+                let mut widget_flags = canvas.engine_mut().background_rendering_regenerate();
+                widget_flags.store_modified = true;
+                appwindow.handle_widget_flags(widget_flags, &canvas);
+            }
+            settingspanel.set_background_pattern(pattern);
+            appwindow.refresh_ui();
+        };
+
+        imp.template_preset_cornell_btn.connect_clicked(clone!(
+            #[weak]
+            appwindow,
+            #[weak(rename_to = settingspanel)]
+            self,
+            move |_| {
+                apply_template_preset(
+                    &appwindow,
+                    &settingspanel,
+                    PatternStyle::Cornell,
+                    Some((32.0, 30.0)),
+                );
+            }
+        ));
+
+        imp.template_preset_ruled_btn.connect_clicked(clone!(
+            #[weak]
+            appwindow,
+            #[weak(rename_to = settingspanel)]
+            self,
+            move |_| {
+                apply_template_preset(
+                    &appwindow,
+                    &settingspanel,
+                    PatternStyle::Lines,
+                    Some((32.0, 26.0)),
+                );
+            }
+        ));
+
+        imp.template_preset_grid_btn.connect_clicked(clone!(
+            #[weak]
+            appwindow,
+            #[weak(rename_to = settingspanel)]
+            self,
+            move |_| {
+                apply_template_preset(
+                    &appwindow,
+                    &settingspanel,
+                    PatternStyle::Grid,
+                    Some((24.0, 24.0)),
+                );
+            }
+        ));
+
+        imp.template_preset_blank_btn.connect_clicked(clone!(
+            #[weak]
+            appwindow,
+            #[weak(rename_to = settingspanel)]
+            self,
+            move |_| {
+                apply_template_preset(&appwindow, &settingspanel, PatternStyle::None, None);
+            }
+        ));
 
         imp.doc_background_pattern_color_button
             .connect_rgba_notify(clone!(

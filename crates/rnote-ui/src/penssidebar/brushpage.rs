@@ -120,6 +120,11 @@ impl RnBrushPage {
         }
     }
 
+    pub(crate) fn switch_brush_style(&self, appwindow: &RnAppWindow, brush_style: BrushStyle) {
+        self.set_brush_style(brush_style);
+        self.apply_brush_style_selection(appwindow, brush_style);
+    }
+
     fn apply_brush_style_selection(&self, appwindow: &RnAppWindow, brush_style: BrushStyle) {
         appwindow
             .engine_config()

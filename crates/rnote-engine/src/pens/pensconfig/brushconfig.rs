@@ -53,7 +53,9 @@ impl Default for MarkerOptions {
     fn default() -> Self {
         let mut options = SmoothOptions::default();
         options.pressure_curve = PressureCurve::Const;
-        options.stroke_width = 12.0;
+        options.stroke_width = 16.0;
+        let color = rnote_compose::Color::new(250.0 / 255.0, 225.0 / 255.0, 60.0 / 255.0, 0.45);
+        options.stroke_color = Some(color);
 
         Self(options)
     }
@@ -132,18 +134,27 @@ impl BrushConfig {
     pub(crate) fn style_for_current_options(&self) -> Style {
         match &self.style {
             BrushStyle::Marker => {
-                let MarkerOptions(options) = self.marker_options.clone();
-
+                let MarkerOptions(mut options) = self.marker_options.clone();
+                if let Some(mut color) = options.stroke_color {
+                    color.a = 0.45;
+                    options.stroke_color = Some(color);
+                }
                 Style::Smooth(options)
             }
             BrushStyle::Solid => {
-                let SolidOptions(options) = self.solid_options.clone();
-
+                let SolidOptions(mut options) = self.solid_options.clone();
+                if let Some(mut color) = options.stroke_color {
+                    color.a = 1.0;
+                    options.stroke_color = Some(color);
+                }
                 Style::Smooth(options)
             }
             BrushStyle::Textured => {
-                let options = self.textured_options.clone();
-
+                let mut options = self.textured_options.clone();
+                if let Some(mut color) = options.stroke_color {
+                    color.a = 1.0;
+                    options.stroke_color = Some(color);
+                }
                 Style::Textured(options)
             }
         }

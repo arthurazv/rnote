@@ -385,6 +385,61 @@ impl RnAppWindow {
         if let Some(enable_text_input) = widget_flags.enable_text_input {
             canvas.enable_text_input(enable_text_input);
         }
+
+        if let Some(content) = widget_flags.clipboard_content {
+            let gdk_content_provider = gdk::ContentProvider::new_union(
+                content
+                    .into_iter()
+                    .map(|(data, mime_type)| {
+                        gdk::ContentProvider::for_bytes(
+                            mime_type.as_str(),
+                            &glib::Bytes::from_owned(data),
+                        )
+                    })
+                    .collect::<Vec<gdk::ContentProvider>>()
+                    .as_slice(),
+            );
+            if let Err(e) = self.clipboard().set_content(Some(&gdk_content_provider)) {
+                error!("Failed to set clipboard content from widget flags: {e:?}");
+            } else {
+                let raw_toast = widget_flags
+                    .clipboard_toast
+                    .unwrap_or_else(|| String::from("Snippet copied to clipboard! Paste with ⌘V"));
+                let localized = Self::localize_toast(&raw_toast);
+                self.overlays().dispatch_toast_text(&localized, Some(std::time::Duration::from_secs(2)));
+            }
+        } else if let Some(ref raw_toast) = widget_flags.clipboard_toast {
+            let localized = Self::localize_toast(raw_toast);
+            self.overlays().dispatch_toast_text(&localized, Some(std::time::Duration::from_secs(2)));
+        }
+
+        // Keep the pages navigator in sync with the active canvas.
+        if self
+            .active_tab_canvas()
+            .is_some_and(|active| active == *canvas)
+        {
+            let pagesnavigator = self.sidebar().pagesnavigator();
+            if widget_flags.store_modified || widget_flags.resize {
+                pagesnavigator.schedule_refresh();
+            }
+            if widget_flags.view_modified || widget_flags.zoomed || widget_flags.resize {
+                pagesnavigator.queue_update_current_page();
+            }
+        }
+    }
+
+    fn localize_toast(text: &str) -> String {
+        if text == "No text found in selection" {
+            gettext("No text found in selection")
+        } else if text == "Snippet copied to clipboard" {
+            gettext("Snippet copied to clipboard")
+        } else if text == "Snippet copied to clipboard! Paste with ⌘V" {
+            gettext("Snippet copied to clipboard! Paste with ⌘V")
+        } else if let Some(preview) = text.strip_prefix("Text copied: ") {
+            format!("{}: {preview}", gettext("Text copied"))
+        } else {
+            text.to_string()
+        }
     }
 
     /// Get the active (selected) tab page.
@@ -477,6 +532,157 @@ impl RnAppWindow {
             .into_iter()
             .map(|o| o.downcast::<adw::TabPage>().unwrap())
             .collect()
+    }
+
+    /// Sends the current selection or area snippet directly to the resolution notebook tab (⌘E).
+    pub(crate) fn send_active_selection_to_resolution_notebook(&self) {
+        let Some(canvas) = self.active_tab_canvas() else {
+            return;
+        };
+        let current_page = self.active_tab_page();
+
+        glib::spawn_future_local(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            #[weak]
+            canvas,
+            async move {
+                let receiver = canvas.engine_ref().fetch_clipboard_content();
+                let (content, widget_flags) = match receiver.await {
+                    Ok(Ok((content, flags))) => (content, flags),
+                    Ok(Err(e)) => {
+                        error!("Fetching clipboard content failed in send-to-notebook: {e:?}");
+                        return;
+                    }
+                    Err(e) => {
+                        error!("Awaiting fetched clipboard content failed in send-to-notebook: {e:?}");
+                        return;
+                    }
+                };
+
+                if content.is_empty() {
+                    let toast = adw::Toast::new(&gettext("Select an area or question first!"));
+                    appwindow.overlays().toast_overlay().add_toast(toast);
+                    return;
+                }
+
+                // Copy to system clipboard
+                let gdk_content_provider = gdk::ContentProvider::new_union(
+                    content
+                        .iter()
+                        .map(|(data, mime_type)| {
+                            gdk::ContentProvider::for_bytes(
+                                mime_type.as_str(),
+                                &glib::Bytes::from_owned(data.clone()),
+                            )
+                        })
+                        .collect::<Vec<gdk::ContentProvider>>()
+                        .as_slice(),
+                );
+                if let Err(e) = appwindow.clipboard().set_content(Some(&gdk_content_provider)) {
+                    error!("Setting clipboard in send-to-notebook failed: {e:?}");
+                }
+                appwindow.handle_widget_flags(widget_flags, &canvas);
+
+                // Find stroke content payload
+                let Some((stroke_bytes, _)) = content
+                    .iter()
+                    .find(|(_, mime)| mime == rnote_engine::engine::StrokeContent::MIME_TYPE)
+                else {
+                    return;
+                };
+
+                let Ok(json_string) = std::str::from_utf8(stroke_bytes) else {
+                    return;
+                };
+
+                let resolution_title = gettext("Caderno de Resoluções");
+                let tabs = appwindow.tabs_snapshot();
+
+                // Look for target tab:
+                // 1. Any other tab containing "Resoluç", "Resolution", or matching title
+                // 2. Or if exactly two tabs are open, the other tab
+                let target_page = tabs
+                    .iter()
+                    .find(|p| {
+                        if let Some(ref cur) = current_page {
+                            if *p == cur {
+                                return false;
+                            }
+                        }
+                        let title = p.title();
+                        title.contains("Resoluç")
+                            || title.contains("Resolution")
+                            || title.as_str() == resolution_title.as_str()
+                    })
+                    .cloned()
+                    .or_else(|| {
+                        if tabs.len() == 2 {
+                            tabs.into_iter().find(|p| {
+                                if let Some(ref cur) = current_page {
+                                    p != cur
+                                } else {
+                                    false
+                                }
+                            })
+                        } else {
+                            None
+                        }
+                    });
+
+                let dest_wrapper = match target_page {
+                    Some(page) => page
+                        .child()
+                        .downcast::<crate::RnCanvasWrapper>()
+                        .expect("Tab child must be RnCanvasWrapper"),
+                    None => {
+                        let wrapper = appwindow.new_canvas_wrapper();
+                        let new_page = appwindow.append_wrapper_new_tab(&wrapper);
+                        new_page.set_title(&resolution_title);
+                        // Maintain active selection on source document so user can continue clipping questions
+                        if let Some(ref cur) = current_page {
+                            appwindow.overlays().tabview().set_selected_page(cur);
+                        }
+                        wrapper
+                    }
+                };
+
+                let dest_canvas = dest_wrapper.canvas();
+                let bottom_y = dest_canvas
+                    .engine_ref()
+                    .bounds_w_content_extended()
+                    .map(|b| b.maxs[1])
+                    .unwrap_or(40.0);
+
+                let target_pos = Vector2::new(50.0, bottom_y + 50.0);
+
+                let resize_argument = rnote_engine::strokes::resize::ImageSizeOption::ResizeImage(
+                    rnote_engine::strokes::resize::Resize {
+                        width: dest_canvas.engine_ref().document.config.format.width(),
+                        height: dest_canvas.engine_ref().document.config.format.height(),
+                        layout_fixed_width: dest_canvas
+                            .engine_ref()
+                            .document
+                            .config
+                            .layout
+                            .is_fixed_width(),
+                        max_viewpoint: None,
+                        restrain_to_viewport: false,
+                        respect_borders: appwindow.respect_borders(),
+                    },
+                );
+
+                if let Err(e) = dest_canvas
+                    .insert_stroke_content(json_string.to_string(), resize_argument, Some(target_pos))
+                    .await
+                {
+                    error!("Failed to insert question snippet into resolution notebook: {e:?}");
+                } else {
+                    let toast = adw::Toast::new(&gettext("Enviado para o Caderno de Resoluções! (⌘E)"));
+                    appwindow.overlays().toast_overlay().add_toast(toast);
+                }
+            }
+        ));
     }
 
     pub(crate) fn tabs_any_unsaved_changes(&self) -> bool {
@@ -608,6 +814,12 @@ impl RnAppWindow {
 
         self.main_header().main_title().set_title(&title);
         self.main_header().main_title().set_subtitle(&subtitle);
+
+        #[cfg(target_os = "macos")]
+        {
+            let path = canvas.output_file().and_then(|f| f.path());
+            update_macos_document_state(self, canvas.unsaved_changes(), path.as_deref());
+        }
     }
 
     /// Open the file, with import dialogs when appropriate.
@@ -620,8 +832,7 @@ impl RnAppWindow {
         target_pos: Option<Vector2>,
         rnote_file_new_tab: bool,
     ) {
-        self.open_file_w_dialogs_with_bytes(input_file, None, target_pos, rnote_file_new_tab)
-            .await;
+        self.open_file_w_dialogs_with_bytes(input_file, None, target_pos, rnote_file_new_tab).await;
     }
 
     pub(crate) async fn open_file_w_dialogs_with_bytes(
@@ -645,8 +856,8 @@ impl RnAppWindow {
             Err(e) => {
                 error!("Opening file with dialogs failed, Err: {e:?}");
 
-                self.overlays()
-                    .dispatch_toast_error(&gettext("Opening file failed"));
+                let err_msg = format!("{}: {e}", gettext("Opening file failed"));
+                self.overlays().dispatch_toast_error(&err_msg);
                 self.overlays().progressbar_abort();
             }
         }
@@ -708,52 +919,58 @@ impl RnAppWindow {
                 }
             }
             FileType::VectorImageFile => {
-                let canvas = self
-                    .active_tab_wrapper()
-                    .ok_or_else(|| anyhow::anyhow!("No active tab to import into"))?
-                    .canvas();
+                let (wrapper, is_new) = match self.active_tab_wrapper() {
+                    Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
+                    _ => (self.new_canvas_wrapper(), true),
+                };
                 let bytes = match initial_bytes {
                     Some(b) => b,
                     None => crate::utils::load_file_bytes_future(&input_file).await?,
                 };
+                if is_new {
+                    self.append_wrapper_new_tab(&wrapper);
+                }
+                let canvas = wrapper.canvas();
                 canvas
                     .load_in_vectorimage_bytes(bytes, target_pos, self.respect_borders())
                     .await?;
+                canvas.set_unsaved_changes(true);
                 true
             }
             FileType::BitmapImageFile => {
-                let canvas = self
-                    .active_tab_wrapper()
-                    .ok_or_else(|| anyhow::anyhow!("No active tab to import into"))?
-                    .canvas();
+                let (wrapper, is_new) = match self.active_tab_wrapper() {
+                    Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
+                    _ => (self.new_canvas_wrapper(), true),
+                };
                 let bytes = match initial_bytes {
                     Some(b) => b,
                     None => crate::utils::load_file_bytes_future(&input_file).await?,
                 };
+                if is_new {
+                    self.append_wrapper_new_tab(&wrapper);
+                }
+                let canvas = wrapper.canvas();
                 canvas
                     .load_in_bitmapimage_bytes(bytes, target_pos, self.respect_borders())
                     .await?;
+                canvas.set_unsaved_changes(true);
                 true
             }
             FileType::XoppFile => {
-                // a new tab for xopp file import
+                // a new tab for xopp file import (attached inside dialog_import_xopp_w_prefs on confirm)
                 let wrapper = self.new_canvas_wrapper();
-                let canvas = wrapper.canvas();
-                let file_imported =
-                    dialogs::import::dialog_import_xopp_w_prefs(self, &canvas, input_file).await?;
-                if file_imported {
-                    self.append_wrapper_new_tab(&wrapper);
-                }
-                file_imported
+                dialogs::import::dialog_import_xopp_w_prefs(self, &wrapper, input_file).await?
             }
             FileType::PdfFile => {
-                let canvas = self
-                    .active_tab_wrapper()
-                    .ok_or_else(|| anyhow::anyhow!("No active tab to import into"))?
-                    .canvas();
+                let (wrapper, is_new) = match self.active_tab_wrapper() {
+                    Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
+                    _ => (self.new_canvas_wrapper(), true),
+                };
+                let canvas = wrapper.canvas();
                 dialogs::import::dialog_import_pdf_w_prefs(
                     self,
                     &canvas,
+                    is_new.then_some(&wrapper),
                     input_file,
                     initial_bytes,
                     target_pos,
@@ -761,15 +978,21 @@ impl RnAppWindow {
                 .await?
             }
             FileType::PlaintextFile => {
-                let canvas = self
-                    .active_tab_wrapper()
-                    .ok_or_else(|| anyhow::anyhow!("No active tab to import into"))?
-                    .canvas();
+                let (wrapper, is_new) = match self.active_tab_wrapper() {
+                    Some(w) if !rnote_file_new_tab || (w.canvas().empty() && w.canvas().output_file().is_none()) => (w, false),
+                    _ => (self.new_canvas_wrapper(), true),
+                };
                 let bytes = match initial_bytes {
                     Some(b) => b,
                     None => crate::utils::load_file_bytes_future(&input_file).await?,
                 };
-                canvas.load_in_text(String::from_utf8(bytes)?, target_pos)?;
+                let text = String::from_utf8(bytes)?;
+                if is_new {
+                    self.append_wrapper_new_tab(&wrapper);
+                }
+                let canvas = wrapper.canvas();
+                canvas.load_in_text(text, target_pos)?;
+                canvas.set_unsaved_changes(true);
                 true
             }
             FileType::Folder => {
@@ -838,7 +1061,6 @@ impl RnAppWindow {
             // Current pen
             match pen_style {
                 PenStyle::Brush => {
-                    self.overlays().penpicker().brush_toggle().set_active(true);
                     self.overlays()
                         .penssidebar()
                         .sidebar_stack()
@@ -847,7 +1069,8 @@ impl RnAppWindow {
                     let style = self.engine_config().read().pens_config.brush_config.style;
                     match style {
                         BrushStyle::Marker => {
-                            let stroke_color = self
+                            self.overlays().penpicker().highlighter_toggle().set_active(true);
+                            let mut stroke_color = self
                                 .engine_config()
                                 .read()
                                 .pens_config
@@ -855,6 +1078,7 @@ impl RnAppWindow {
                                 .marker_options
                                 .stroke_color
                                 .unwrap_or(Color::TRANSPARENT);
+                            stroke_color.a = 1.0;
                             let fill_color = self
                                 .engine_config()
                                 .read()
@@ -871,7 +1095,8 @@ impl RnAppWindow {
                                 .set_fill_color(gdk::RGBA::from_compose_color(fill_color));
                         }
                         BrushStyle::Solid => {
-                            let stroke_color = self
+                            self.overlays().penpicker().brush_toggle().set_active(true);
+                            let mut stroke_color = self
                                 .engine_config()
                                 .read()
                                 .pens_config
@@ -879,6 +1104,7 @@ impl RnAppWindow {
                                 .solid_options
                                 .stroke_color
                                 .unwrap_or(Color::TRANSPARENT);
+                            stroke_color.a = 1.0;
                             let fill_color = self
                                 .engine_config()
                                 .read()
@@ -895,7 +1121,8 @@ impl RnAppWindow {
                                 .set_fill_color(gdk::RGBA::from_compose_color(fill_color));
                         }
                         BrushStyle::Textured => {
-                            let stroke_color = self
+                            self.overlays().penpicker().brush_toggle().set_active(true);
+                            let mut stroke_color = self
                                 .engine_config()
                                 .read()
                                 .pens_config
@@ -903,6 +1130,7 @@ impl RnAppWindow {
                                 .textured_options
                                 .stroke_color
                                 .unwrap_or(Color::TRANSPARENT);
+                            stroke_color.a = 1.0;
                             self.overlays()
                                 .colorpicker()
                                 .set_stroke_color(gdk::RGBA::from_compose_color(stroke_color));
@@ -997,10 +1225,25 @@ impl RnAppWindow {
                         .set_visible_child_name("eraser_page");
                 }
                 PenStyle::Selector => {
-                    self.overlays()
-                        .penpicker()
-                        .selector_toggle()
-                        .set_active(true);
+                    let selector_style = self
+                        .engine_config()
+                        .read()
+                        .pens_config
+                        .selector_config
+                        .style;
+                    if selector_style
+                        == rnote_engine::pens::pensconfig::selectorconfig::SelectorStyle::Text
+                    {
+                        self.overlays()
+                            .penpicker()
+                            .text_selector_toggle()
+                            .set_active(true);
+                    } else {
+                        self.overlays()
+                            .penpicker()
+                            .selector_toggle()
+                            .set_active(true);
+                    }
                     self.overlays()
                         .penssidebar()
                         .sidebar_stack()
@@ -1087,4 +1330,217 @@ impl RnAppWindow {
 
         Ok(())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn update_macos_document_state(
+    window: &RnAppWindow,
+    edited: bool,
+    file_path: Option<&std::path::Path>,
+) {
+    let Some(surface) = window.surface() else {
+        return;
+    };
+    unsafe {
+        unsafe extern "C" {
+            fn gdk_macos_surface_get_native_window(
+                surface: *mut std::ffi::c_void,
+            ) -> *mut std::ffi::c_void;
+            fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+            fn objc_msgSend(
+                receiver: *mut std::ffi::c_void,
+                op: *mut std::ffi::c_void,
+                ...
+            ) -> *mut std::ffi::c_void;
+            fn objc_getClass(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+        }
+
+        let nswindow = gdk_macos_surface_get_native_window(surface.as_ptr() as *mut _);
+        if nswindow.is_null() {
+            return;
+        }
+
+        let sel_set_edited = sel_registerName(b"setDocumentEdited:\0".as_ptr() as *const _);
+        let msg_set_edited: unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void, bool) =
+            std::mem::transmute(objc_msgSend as *const ());
+        msg_set_edited(nswindow, sel_set_edited, edited);
+
+        let sel_set_filename =
+            sel_registerName(b"setRepresentedFilename:\0".as_ptr() as *const _);
+        let msg_set_filename: unsafe extern "C" fn(
+            *mut std::ffi::c_void,
+            *mut std::ffi::c_void,
+            *mut std::ffi::c_void,
+        ) = std::mem::transmute(objc_msgSend as *const ());
+
+        let nsstring_cls = objc_getClass(b"NSString\0".as_ptr() as *const _);
+        if let Some(path) = file_path
+            && let Some(path_str) = path.to_str()
+        {
+            let sel_string_with_utf8 =
+                sel_registerName(b"stringWithUTF8String:\0".as_ptr() as *const _);
+            let msg_nsstring: unsafe extern "C" fn(
+                *mut std::ffi::c_void,
+                *mut std::ffi::c_void,
+                *const std::ffi::c_char,
+            ) -> *mut std::ffi::c_void = std::mem::transmute(objc_msgSend as *const ());
+            let c_str = std::ffi::CString::new(path_str).unwrap_or_default();
+            let ns_path = msg_nsstring(nsstring_cls, sel_string_with_utf8, c_str.as_ptr());
+            if !ns_path.is_null() {
+                msg_set_filename(nswindow, sel_set_filename, ns_path);
+            }
+        } else {
+            let sel_string = sel_registerName(b"string\0".as_ptr() as *const _);
+            let msg_string: unsafe extern "C" fn(
+                *mut std::ffi::c_void,
+                *mut std::ffi::c_void,
+            ) -> *mut std::ffi::c_void = std::mem::transmute(objc_msgSend as *const ());
+            let empty_ns_str = msg_string(nsstring_cls, sel_string);
+            msg_set_filename(nswindow, sel_set_filename, empty_ns_str);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_vision_recognize_text(png_bytes: &[u8]) -> Option<String> {
+    use std::ffi::{c_char, c_void, CStr};
+    unsafe {
+        unsafe extern "C" {
+            fn dlopen(filename: *const c_char, flag: i32) -> *mut c_void;
+            fn sel_registerName(name: *const c_char) -> *mut c_void;
+            fn objc_msgSend(receiver: *mut c_void, op: *mut c_void, ...) -> *mut c_void;
+            fn objc_getClass(name: *const c_char) -> *mut c_void;
+        }
+
+        // Dynamically load Vision.framework
+        let vision_path = b"/System/Library/Frameworks/Vision.framework/Vision\0";
+        dlopen(vision_path.as_ptr() as *const _, 1);
+
+        let nsdata_cls = objc_getClass(b"NSData\0".as_ptr() as *const _);
+        if nsdata_cls.is_null() {
+            return None;
+        }
+        let sel_data_with_bytes = sel_registerName(b"dataWithBytes:length:\0".as_ptr() as *const _);
+        let msg_data: unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, usize) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+        let ns_data = msg_data(nsdata_cls, sel_data_with_bytes, png_bytes.as_ptr(), png_bytes.len());
+        if ns_data.is_null() {
+            return None;
+        }
+
+        let req_handler_cls = objc_getClass(b"VNImageRequestHandler\0".as_ptr() as *const _);
+        let text_req_cls = objc_getClass(b"VNRecognizeTextRequest\0".as_ptr() as *const _);
+        let nsdict_cls = objc_getClass(b"NSDictionary\0".as_ptr() as *const _);
+        let nsarray_cls = objc_getClass(b"NSArray\0".as_ptr() as *const _);
+        if req_handler_cls.is_null() || text_req_cls.is_null() || nsdict_cls.is_null() || nsarray_cls.is_null() {
+            return None;
+        }
+
+        let sel_alloc = sel_registerName(b"alloc\0".as_ptr() as *const _);
+        let sel_init = sel_registerName(b"init\0".as_ptr() as *const _);
+        let sel_dict = sel_registerName(b"dictionary\0".as_ptr() as *const _);
+        let msg_simple: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+
+        let empty_dict = msg_simple(nsdict_cls, sel_dict);
+
+        let handler_alloc = msg_simple(req_handler_cls, sel_alloc);
+        let sel_init_with_data = sel_registerName(b"initWithData:options:\0".as_ptr() as *const _);
+        let msg_init_data: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+        let handler = msg_init_data(handler_alloc, sel_init_with_data, ns_data, empty_dict);
+        if handler.is_null() {
+            return None;
+        }
+
+        let text_req_alloc = msg_simple(text_req_cls, sel_alloc);
+        let text_req = msg_simple(text_req_alloc, sel_init);
+        if text_req.is_null() {
+            return None;
+        }
+
+        let sel_set_rec_level = sel_registerName(b"setRecognitionLevel:\0".as_ptr() as *const _);
+        let msg_set_rec: unsafe extern "C" fn(*mut c_void, *mut c_void, isize) =
+            std::mem::transmute(objc_msgSend as *const ());
+        msg_set_rec(text_req, sel_set_rec_level, 0); // VNRequestTextRecognitionLevelAccurate = 0
+
+        let sel_set_lang = sel_registerName(b"setUsesLanguageCorrection:\0".as_ptr() as *const _);
+        let msg_set_bool: unsafe extern "C" fn(*mut c_void, *mut c_void, bool) =
+            std::mem::transmute(objc_msgSend as *const ());
+        msg_set_bool(text_req, sel_set_lang, true);
+
+        let sel_array_with_obj = sel_registerName(b"arrayWithObject:\0".as_ptr() as *const _);
+        let msg_array: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+        let reqs_array = msg_array(nsarray_cls, sel_array_with_obj, text_req);
+
+        let sel_perform = sel_registerName(b"performRequests:error:\0".as_ptr() as *const _);
+        let msg_perform: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut *mut c_void) -> bool =
+            std::mem::transmute(objc_msgSend as *const ());
+        let mut err: *mut c_void = std::ptr::null_mut();
+        let success = msg_perform(handler, sel_perform, reqs_array, &mut err);
+        if !success {
+            return None;
+        }
+
+        let sel_results = sel_registerName(b"results\0".as_ptr() as *const _);
+        let results = msg_simple(text_req, sel_results);
+        if results.is_null() {
+            return None;
+        }
+
+        let sel_count = sel_registerName(b"count\0".as_ptr() as *const _);
+        let msg_count: unsafe extern "C" fn(*mut c_void, *mut c_void) -> usize =
+            std::mem::transmute(objc_msgSend as *const ());
+        let count = msg_count(results, sel_count);
+        if count == 0 {
+            return None;
+        }
+
+        let sel_obj_at = sel_registerName(b"objectAtIndex:\0".as_ptr() as *const _);
+        let msg_obj_at: unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+        let sel_top = sel_registerName(b"topCandidates:\0".as_ptr() as *const _);
+        let sel_str = sel_registerName(b"string\0".as_ptr() as *const _);
+        let sel_utf8 = sel_registerName(b"UTF8String\0".as_ptr() as *const _);
+        let msg_utf8: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *const c_char =
+            std::mem::transmute(objc_msgSend as *const ());
+
+        let mut lines = Vec::new();
+        for i in 0..count {
+            let obs = msg_obj_at(results, sel_obj_at, i);
+            if obs.is_null() {
+                continue;
+            }
+            let candidates = msg_obj_at(obs, sel_top, 1);
+            if candidates.is_null() || msg_count(candidates, sel_count) == 0 {
+                continue;
+            }
+            let top = msg_obj_at(candidates, sel_obj_at, 0);
+            if top.is_null() {
+                continue;
+            }
+            let ns_str = msg_simple(top, sel_str);
+            if ns_str.is_null() {
+                continue;
+            }
+            let c_str = msg_utf8(ns_str, sel_utf8);
+            if !c_str.is_null() {
+                if let Ok(s) = CStr::from_ptr(c_str).to_str() {
+                    lines.push(s.to_string());
+                }
+            }
+        }
+
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.join("\n"))
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn macos_vision_recognize_text(_png_bytes: &[u8]) -> Option<String> {
+    None
 }

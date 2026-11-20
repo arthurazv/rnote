@@ -69,6 +69,7 @@ impl RnApp {
         {
             self.set_accels_for_action("app.quit", &["<Meta>q", "<Primary>q", "<Ctrl>q"]);
             self.set_accels_for_action("app.new-window", &["<Meta>n", "<Primary>n", "<Ctrl>n"]);
+            self.set_accels_for_action("win.open-doc-new-window", &["<Meta><Shift>o", "<Primary><Shift>o"]);
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -87,6 +88,7 @@ impl RnApp {
         file_new_open.append(Some("New Tab"), Some("win.new-tab"));
         file_new_open.append(Some("New Window"), Some("app.new-window"));
         file_new_open.append(Some("Open…"), Some("win.open-doc"));
+        file_new_open.append(Some("Open in New Window…"), Some("win.open-doc-new-window"));
         file_menu.append_section(None, &file_new_open);
 
         let file_import_export = gio::Menu::new();
@@ -115,11 +117,14 @@ impl RnApp {
         let edit_clipboard = gio::Menu::new();
         edit_clipboard.append(Some("Cut"), Some("win.clipboard-cut"));
         edit_clipboard.append(Some("Copy"), Some("win.clipboard-copy"));
+        edit_clipboard.append(Some("Copy as Text"), Some("win.copy-text"));
+        edit_clipboard.append(Some("Send to Resolution Notebook"), Some("win.send-to-notebook"));
         edit_clipboard.append(Some("Paste"), Some("win.clipboard-paste"));
         edit_clipboard.append(Some("Select All"), Some("win.selection-select-all"));
         edit_menu.append_section(None, &edit_clipboard);
 
         let edit_doc = gio::Menu::new();
+        edit_doc.append(Some("Find…"), Some("win.search"));
         edit_doc.append(Some("Clear Document"), Some("win.clear-doc"));
         edit_menu.append_section(None, &edit_doc);
         menubar.append_submenu(Some("Edit"), &edit_menu);
@@ -129,9 +134,30 @@ impl RnApp {
         view_menu.append(Some("Zoom In"), Some("win.zoom-in"));
         view_menu.append(Some("Zoom Out"), Some("win.zoom-out"));
         view_menu.append(Some("Reset Zoom"), Some("win.zoom-reset"));
-        view_menu.append(Some("Toggle Overview"), Some("win.toggle-overview"));
-        view_menu.append(Some("Fullscreen"), Some("win.fullscreen"));
+
+        let view_pages = gio::Menu::new();
+        view_pages.append(Some("Pages Navigator"), Some("win.show-pages"));
+        view_pages.append(Some("Next Page"), Some("win.go-to-next-page"));
+        view_pages.append(Some("Previous Page"), Some("win.go-to-prev-page"));
+        view_pages.append(Some("Return to Origin Page"), Some("win.return-origin-page"));
+        view_menu.append_section(None, &view_pages);
+
+        let view_ui = gio::Menu::new();
+        view_ui.append(Some("Toggle Overview"), Some("win.toggle-overview"));
+        view_ui.append(Some("Fullscreen"), Some("win.fullscreen"));
+        view_menu.append_section(None, &view_ui);
         menubar.append_submenu(Some("View"), &view_menu);
+
+        // Tools
+        let tools_menu = gio::Menu::new();
+        tools_menu.append(Some("Brush / Pen"), Some("win.pen-style::brush"));
+        tools_menu.append(Some("Highlighter"), Some("win.toggle-highlighter"));
+        tools_menu.append(Some("Shaper"), Some("win.pen-style::shaper"));
+        tools_menu.append(Some("Typewriter"), Some("win.pen-style::typewriter"));
+        tools_menu.append(Some("Eraser"), Some("win.pen-style::eraser"));
+        tools_menu.append(Some("Selector"), Some("win.pen-style::selector"));
+        tools_menu.append(Some("Tools"), Some("win.pen-style::tools"));
+        menubar.append_submenu(Some("Tools"), &tools_menu);
 
         // Window Menu (macOS native special submenu)
         let window_menu = gio::Menu::new();

@@ -19,9 +19,13 @@ mod imp {
         #[template_child]
         pub(crate) brush_toggle: TemplateChild<ToggleButton>,
         #[template_child]
+        pub(crate) highlighter_toggle: TemplateChild<ToggleButton>,
+        #[template_child]
         pub(crate) shaper_toggle: TemplateChild<ToggleButton>,
         #[template_child]
         pub(crate) typewriter_toggle: TemplateChild<ToggleButton>,
+        #[template_child]
+        pub(crate) text_selector_toggle: TemplateChild<ToggleButton>,
         #[template_child]
         pub(crate) eraser_toggle: TemplateChild<ToggleButton>,
         #[template_child]
@@ -82,12 +86,20 @@ impl RnPenPicker {
         self.imp().brush_toggle.get()
     }
 
+    pub(crate) fn highlighter_toggle(&self) -> ToggleButton {
+        self.imp().highlighter_toggle.get()
+    }
+
     pub(crate) fn shaper_toggle(&self) -> ToggleButton {
         self.imp().shaper_toggle.get()
     }
 
     pub(crate) fn typewriter_toggle(&self) -> ToggleButton {
         self.imp().typewriter_toggle.get()
+    }
+
+    pub(crate) fn text_selector_toggle(&self) -> ToggleButton {
+        self.imp().text_selector_toggle.get()
     }
 
     pub(crate) fn eraser_toggle(&self) -> ToggleButton {
@@ -152,7 +164,23 @@ impl RnPenPicker {
             appwindow,
             move |brush_toggle| {
                 if brush_toggle.is_active() {
+                    let brush_page = appwindow.overlays().penssidebar().brush_page();
+                    brush_page.switch_brush_style(&appwindow, rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Solid);
                     appwindow.set_pen_style_with_lock(PenStyle::Brush);
+                    appwindow.refresh_ui();
+                }
+            }
+        ));
+
+        imp.highlighter_toggle.connect_toggled(clone!(
+            #[weak]
+            appwindow,
+            move |highlighter_toggle| {
+                if highlighter_toggle.is_active() {
+                    let brush_page = appwindow.overlays().penssidebar().brush_page();
+                    brush_page.switch_brush_style(&appwindow, rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Marker);
+                    appwindow.set_pen_style_with_lock(PenStyle::Brush);
+                    appwindow.refresh_ui();
                 }
             }
         ));
@@ -177,6 +205,23 @@ impl RnPenPicker {
             }
         ));
 
+        imp.text_selector_toggle.connect_toggled(clone!(
+            #[weak]
+            appwindow,
+            move |text_selector_toggle| {
+                if text_selector_toggle.is_active() {
+                    appwindow
+                        .engine_config()
+                        .write()
+                        .pens_config
+                        .selector_config
+                        .style = rnote_engine::pens::pensconfig::selectorconfig::SelectorStyle::Text;
+                    appwindow.set_pen_style_with_lock(PenStyle::Selector);
+                    appwindow.refresh_ui();
+                }
+            }
+        ));
+
         imp.eraser_toggle.get().connect_toggled(clone!(
             #[weak]
             appwindow,
@@ -192,7 +237,23 @@ impl RnPenPicker {
             appwindow,
             move |selector_toggle| {
                 if selector_toggle.is_active() {
+                    if appwindow
+                        .engine_config()
+                        .read()
+                        .pens_config
+                        .selector_config
+                        .style
+                        == rnote_engine::pens::pensconfig::selectorconfig::SelectorStyle::Text
+                    {
+                        appwindow
+                            .engine_config()
+                            .write()
+                            .pens_config
+                            .selector_config
+                            .style = rnote_engine::pens::pensconfig::selectorconfig::SelectorStyle::Rectangle;
+                    }
                     appwindow.set_pen_style_with_lock(PenStyle::Selector);
+                    appwindow.refresh_ui();
                 }
             }
         ));

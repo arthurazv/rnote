@@ -785,4 +785,196 @@ impl StrokeStore {
             })
             .collect()
     }
+
+    /// Returns the layer of the stroke with the given key.
+    pub fn stroke_layer(&self, key: StrokeKey) -> Option<StrokeLayer> {
+        self.chrono_components.get(key).map(|c| c.layer)
+    }
+
+    /// Extracts all text snippets with their bounding boxes in natural reading order inside the given bounding box.
+    pub fn extract_text_runs_in_bounds(&self, bounds: Aabb) -> Vec<(String, Aabb)> {
+        let keys = self.keys_sorted_chrono_intersecting_bounds(bounds);
+        let mut words_with_pos: Vec<(String, Aabb)> = Vec::new();
+
+        for key in keys {
+            if let Some(stroke) = self.get_stroke_arc(key) {
+                match &*stroke {
+                    crate::strokes::Stroke::TextStroke(t) => {
+                        let t_bounds = t.bounds();
+                        if bounds.intersects(&t_bounds) {
+                            words_with_pos.push((t.text.clone(), t_bounds));
+                        }
+                    }
+                    crate::strokes::Stroke::BitmapImage(b) => {
+                        for run in &b.text_runs {
+                            let run_bounds = crate::textsearch::text_run_to_doc_bounds(
+                                &run.bbox,
+                                &b.rectangle,
+                            );
+                            if bounds.intersects(&run_bounds) {
+                                words_with_pos.push((run.text.clone(), run_bounds));
+                            }
+                        }
+                    }
+                    crate::strokes::Stroke::VectorImage(v) => {
+                        for run in &v.text_runs {
+                            let run_bounds = crate::textsearch::text_run_to_doc_bounds(
+                                &run.bbox,
+                                &v.rectangle,
+                            );
+                            if bounds.intersects(&run_bounds) {
+                                words_with_pos.push((run.text.clone(), run_bounds));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Sort in natural reading order: top-to-bottom, left-to-right
+        words_with_pos.sort_by(|a, b| {
+            let y_diff = (a.1.mins[1] - b.1.mins[1]).abs();
+            if y_diff > 12.0 {
+                a.1.mins[1].total_cmp(&b.1.mins[1])
+            } else {
+                a.1.mins[0].total_cmp(&b.1.mins[0])
+            }
+        });
+
+        words_with_pos
+    }
+
+    /// Extracts all text snippets in natural reading order inside the given bounding box.
+    pub fn extract_text_in_bounds(&self, bounds: Aabb) -> Vec<String> {
+        self.extract_text_runs_in_bounds(bounds)
+            .into_iter()
+            .map(|(w, _)| w)
+            .collect()
+    }
+
+    /// Merges adjacent word bounding boxes on the same line into contiguous spans.
+    /// This drastically reduces Cairo draw calls and eliminates alpha-overlap artifacts.
+    pub fn merge_word_boxes_into_line_spans(mut boxes: Vec<Aabb>) -> Vec<Aabb> {
+        if boxes.is_empty() {
+            return boxes;
+        }
+        boxes.sort_by(|a, b| {
+            let y_diff = (a.mins[1] - b.mins[1]).abs();
+            if y_diff > 8.0 {
+                a.mins[1].total_cmp(&b.mins[1])
+            } else {
+                a.mins[0].total_cmp(&b.mins[0])
+            }
+        });
+
+        let mut merged: Vec<Aabb> = Vec::with_capacity(boxes.len());
+        let mut current = boxes[0];
+
+        for b in boxes.into_iter().skip(1) {
+            let same_line = (b.mins[1] - current.mins[1]).abs() < 8.0
+                && (b.maxs[1] - current.maxs[1]).abs() < 8.0;
+            let adjacent = b.mins[0] <= current.maxs[0] + 18.0;
+
+            if same_line && adjacent {
+                current.maxs[0] = current.maxs[0].max(b.maxs[0]);
+                current.mins[1] = current.mins[1].min(b.mins[1]);
+                current.maxs[1] = current.maxs[1].max(b.maxs[1]);
+            } else {
+                merged.push(current);
+                current = b;
+            }
+        }
+        merged.push(current);
+        merged
+    }
+
+    /// Generates high-resolution cropped snippet clipboard data for the given bounding box.
+    /// This captures everything rendered within bounds (PDF pages, images, handwritten strokes, backgrounds)
+    /// and packages them with high-fidelity StrokeContent, PNG, SVG and extracted text.
+    pub(crate) fn generate_area_snippet_clipboard(
+        &self,
+        background: crate::document::Background,
+        bounds: Aabb,
+        scale_factor: Option<f64>,
+        auto_threshold: bool,
+    ) -> Option<(Vec<(Vec<u8>, String)>, WidgetFlags)> {
+        let mut widget_flags = WidgetFlags::default();
+        let keys = self.stroke_keys_as_rendered_intersecting_bounds(bounds);
+        let stroke_content = self
+            .fetch_stroke_content(&keys)
+            .with_background(background)
+            .with_bounds(bounds);
+
+        let image_scale = scale_factor.unwrap_or(2.0).clamp(1.0, 3.0);
+
+        let mut cropped_image = crate::Image::gen_with_cairo(
+            |cairo_cx| {
+                stroke_content.draw_to_cairo(
+                    cairo_cx,
+                    true,
+                    false,
+                    false,
+                    0.0,
+                    image_scale,
+                )
+            },
+            bounds,
+            image_scale,
+        ).ok()?;
+
+        if auto_threshold {
+            cropped_image.apply_auto_threshold_cleanup(false);
+        }
+
+        let png_bytes = cropped_image
+            .clone()
+            .into_encoded_bytes(image::ImageFormat::Png, None)
+            .ok()?;
+
+        let mut clipboard_content = Vec::new();
+
+        // 1. Native StrokeContent for pasting 1:1 inside Rnote notes
+        let logical_size = bounds.extents();
+        let affine = p2d::glamx::DAffine2::from_translation(logical_size * 0.5);
+        let cropped_bitmap = crate::strokes::BitmapImage {
+            image: cropped_image,
+            rectangle: rnote_compose::shapes::Rectangle {
+                cuboid: p2d::shape::Cuboid::new(logical_size * 0.5),
+                affine,
+            },
+            text_runs: Vec::new(),
+            pdf_source: None,
+        };
+        let cropped_stroke_content = StrokeContent::default()
+            .with_strokes(vec![crate::engine::strokecontent::LayeredStroke {
+                stroke: std::sync::Arc::new(crate::strokes::Stroke::BitmapImage(cropped_bitmap)),
+                layer: crate::store::chrono_comp::StrokeLayer::UserLayer(0),
+            }])
+            .with_bounds(Aabb::new(Vector2::ZERO, logical_size));
+
+        if let Ok(json) = serde_json::to_string(&cropped_stroke_content) {
+            clipboard_content.push((json.into_bytes(), StrokeContent::MIME_TYPE.to_string()));
+        }
+
+        // 2. High-res PNG for external apps
+        clipboard_content.push((png_bytes, "image/png".to_string()));
+
+        // 3. SVG vector export
+        if let Ok(Some(svg)) = stroke_content.gen_svg(true, false, false, 0.0) {
+            clipboard_content.push((svg.to_document().into_bytes(), crate::Svg::MIME_TYPE.to_string()));
+        }
+
+        // 4. Extracted plain text (secondary fallback for pure text fields)
+        let extracted_text_pieces = self.extract_text_in_bounds(bounds);
+        if !extracted_text_pieces.is_empty() {
+            let joined_text = extracted_text_pieces.join(" ");
+            clipboard_content.push((joined_text.into_bytes(), "text/plain".to_string()));
+        }
+
+        widget_flags.clipboard_content = Some(clipboard_content.clone());
+        widget_flags.clipboard_toast = Some("Snippet copied to clipboard".to_string());
+
+        Some((clipboard_content, widget_flags))
+    }
 }

@@ -159,6 +159,7 @@ endif
 
 rnote_ui_gresources_icons_files = files(
     'icons/scalable/actions/add-page-symbolic.svg',
+    'icons/scalable/actions/doc-pages-symbolic.svg',
     'icons/scalable/actions/appwindow-fullscreen-symbolic.svg',
     'icons/scalable/actions/canvasmenu-symbolic.svg',
     'icons/scalable/actions/clipboard-copy-symbolic.svg',
@@ -221,6 +222,7 @@ rnote_ui_gresources_icons_files = files(
     'icons/scalable/actions/pen-selector-rectangle-symbolic.svg',
     'icons/scalable/actions/pen-selector-single-symbolic.svg',
     'icons/scalable/actions/pen-selector-symbolic.svg',
+    'icons/scalable/actions/pen-text-select-symbolic.svg',
     'icons/scalable/actions/pen-shaper-style-rough-symbolic.svg',
     'icons/scalable/actions/pen-shaper-style-smooth-symbolic.svg',
     'icons/scalable/actions/pen-shaper-symbolic.svg',

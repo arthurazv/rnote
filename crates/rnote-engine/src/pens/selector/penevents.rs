@@ -6,7 +6,7 @@ use crate::pens::PenBehaviour;
 use crate::pens::pensconfig::selectorconfig::SelectorStyle;
 use crate::snap::SnapCorner;
 use crate::store::StrokeKey;
-use p2d::bounding_volume::Aabb;
+use p2d::bounding_volume::{Aabb, BoundingVolume};
 use p2d::math::Vector2;
 use p2d::query::PointQuery;
 use rnote_compose::eventresult::{EventPropagation, EventResult};
@@ -28,7 +28,9 @@ impl Selector {
         self.pos = Some(element.pos);
 
         let event_result = match &mut self.state {
-            SelectorState::Idle => {
+            SelectorState::Idle
+            | SelectorState::TextSelected { .. }
+            | SelectorState::AreaSelected { .. } => {
                 // Deselect on start
                 let selection_keys = engine_view.store.selection_keys_as_rendered();
                 if !selection_keys.is_empty() {
@@ -89,7 +91,9 @@ impl Selector {
                                 engine_view.camera.viewport(),
                                 element.pos,
                             )
-                            .pop();
+                            .into_iter()
+                            .filter(|&k| engine_view.store.stroke_layer(k) != Some(crate::store::chrono_comp::StrokeLayer::Document))
+                            .last();
 
                         if (modifier_keys.contains(&ModifierKey::KeyboardShift))
                             && key_to_add
@@ -104,6 +108,26 @@ impl Selector {
                             {
                                 *selection_bounds = new_bounds;
                             }
+                        } else if let Some((stroke_key, vertex_index)) =
+                            Self::single_selected_shape(selection, engine_view.store).and_then(
+                                |(key, shapestroke)| {
+                                    crate::pens::shaperecognizer::shape_control_vertices(
+                                        &shapestroke.shape,
+                                    )
+                                    .into_iter()
+                                    .enumerate()
+                                    .find(|(_, v)| {
+                                        Self::vertex_node_sphere(*v, engine_view.camera)
+                                            .contains_local_point(element.pos)
+                                    })
+                                    .map(|(idx, _)| (key, idx))
+                                },
+                            )
+                        {
+                            *modify_state = ModifyState::EditVertex {
+                                stroke_key,
+                                vertex_index,
+                            };
                         } else if Self::rotate_node_sphere(*selection_bounds, engine_view.camera)
                             .contains_local_point(element.pos)
                         {
@@ -388,6 +412,39 @@ impl Selector {
                             *last_rendered_bounds = *selection_bounds;
                         }
                     }
+                    ModifyState::EditVertex {
+                        stroke_key,
+                        vertex_index,
+                    } => {
+                        let target_pos = engine_view
+                            .document
+                            .snap_position(element.pos, engine_view.config);
+                        let constrain = modifier_keys.contains(&ModifierKey::KeyboardShift);
+
+                        if let Some(crate::strokes::Stroke::ShapeStroke(shapestroke)) =
+                            engine_view.store.get_stroke_mut(*stroke_key)
+                        {
+                            crate::pens::shaperecognizer::set_shape_control_vertex(
+                                &mut shapestroke.shape,
+                                *vertex_index,
+                                target_pos,
+                                constrain,
+                            );
+                        }
+
+                        engine_view.store.update_geometry_for_stroke(*stroke_key);
+                        engine_view.store.regenerate_rendering_for_stroke_threaded(
+                            engine_view.tasks_tx.clone(),
+                            *stroke_key,
+                            engine_view.camera.viewport(),
+                            engine_view.camera.image_scale(),
+                        );
+
+                        if let Some(new_bounds) = engine_view.store.bounds_for_strokes(selection) {
+                            *selection_bounds = new_bounds;
+                        }
+                        widget_flags.redraw = true;
+                    }
                 }
 
                 widget_flags.store_modified = true;
@@ -414,15 +471,70 @@ impl Selector {
         self.pos = Some(element.pos);
 
         let event_result = match &mut self.state {
-            SelectorState::Idle => EventResult {
+            SelectorState::Idle
+            | SelectorState::TextSelected { .. }
+            | SelectorState::AreaSelected { .. } => EventResult {
                 handled: false,
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,
             },
             SelectorState::Selecting { path } => {
                 let mut progress = PenProgress::Finished;
+                Self::add_to_select_path(
+                    engine_view.config.pens_config.selector_config.style,
+                    path,
+                    element,
+                );
+
+                if engine_view.config.pens_config.selector_config.style == SelectorStyle::Text {
+                    if let (Some(first), Some(last)) = (path.first(), path.last()) {
+                        let aabb = Aabb::new_positive(first.pos, last.pos);
+                        let runs = engine_view.store.extract_text_runs_in_bounds(aabb);
+                        if !runs.is_empty() {
+                            let text = runs.iter().map(|(w, _)| w.as_str()).collect::<Vec<_>>().join(" ");
+                            let raw_boxes: Vec<Aabb> = runs.into_iter().map(|(_, b)| b).collect();
+                            let word_boxes = crate::store::StrokeStore::merge_word_boxes_into_line_spans(raw_boxes);
+                            let preview: String = text.chars().take(35).collect();
+
+                            let mut combined_bounds = aabb;
+                            for b in &word_boxes {
+                                combined_bounds.merge(b);
+                            }
+
+                            self.state = SelectorState::TextSelected {
+                                bounds: combined_bounds,
+                                word_boxes,
+                                text: text.clone(),
+                            };
+                            widget_flags.clipboard_content = Some(vec![
+                                (text.into_bytes(), "text/plain".to_string()),
+                            ]);
+                            widget_flags.clipboard_toast = Some(format!(
+                                "Text copied: \"{preview}...\""
+                            ));
+                            progress = PenProgress::Finished;
+                        } else {
+                            self.state = SelectorState::Idle;
+                            widget_flags.clipboard_toast = Some(String::from("No text found in selection"));
+                            progress = PenProgress::Finished;
+                        }
+                    } else {
+                        self.state = SelectorState::Idle;
+                    }
+                    widget_flags |= self.update_state(engine_view);
+
+                    return (
+                        EventResult {
+                            handled: true,
+                            propagate: EventPropagation::Stop,
+                            progress,
+                        },
+                        widget_flags,
+                    );
+                }
 
                 let new_selection = match engine_view.config.pens_config.selector_config.style {
+                    SelectorStyle::Text => vec![],
                     SelectorStyle::Polygon => {
                         if path.len() >= 3 {
                             engine_view
@@ -431,6 +543,9 @@ impl Selector {
                                     path,
                                     engine_view.camera.viewport(),
                                 )
+                                .into_iter()
+                                .filter(|&k| engine_view.store.stroke_layer(k) != Some(crate::store::chrono_comp::StrokeLayer::Document))
+                                .collect()
                         } else {
                             vec![]
                         }
@@ -440,10 +555,15 @@ impl Selector {
                             && let Some(last) = path.last()
                         {
                             let aabb = Aabb::new_positive(first.pos, last.pos);
-                            engine_view.store.strokes_hitboxes_contained_in_aabb(
-                                aabb,
-                                engine_view.camera.viewport(),
-                            )
+                            engine_view
+                                .store
+                                .strokes_hitboxes_contained_in_aabb(
+                                    aabb,
+                                    engine_view.camera.viewport(),
+                                )
+                                .into_iter()
+                                .filter(|&k| engine_view.store.stroke_layer(k) != Some(crate::store::chrono_comp::StrokeLayer::Document))
+                                .collect()
                         } else {
                             vec![]
                         }
@@ -456,7 +576,9 @@ impl Selector {
                                     engine_view.camera.viewport(),
                                     last.pos,
                                 )
-                                .pop()
+                                .into_iter()
+                                .filter(|&k| engine_view.store.stroke_layer(k) != Some(crate::store::chrono_comp::StrokeLayer::Document))
+                                .last()
                         }) {
                             vec![key]
                         } else {
@@ -465,10 +587,15 @@ impl Selector {
                     }
                     SelectorStyle::IntersectingPath => {
                         if path.len() >= 3 {
-                            engine_view.store.strokes_hitboxes_intersect_path(
-                                path,
-                                engine_view.camera.viewport(),
-                            )
+                            engine_view
+                                .store
+                                .strokes_hitboxes_intersect_path(
+                                    path,
+                                    engine_view.camera.viewport(),
+                                )
+                                .into_iter()
+                                .filter(|&k| engine_view.store.stroke_layer(k) != Some(crate::store::chrono_comp::StrokeLayer::Document))
+                                .collect()
                         } else {
                             vec![]
                         }
@@ -482,9 +609,55 @@ impl Selector {
                     widget_flags.deselect_color_setters = true;
 
                     progress = PenProgress::InProgress;
-                }
+                    widget_flags |= self.update_state(engine_view);
+                } else {
+                    let area_bounds = match engine_view.config.pens_config.selector_config.style {
+                        SelectorStyle::Rectangle => {
+                            if let (Some(first), Some(last)) = (path.first(), path.last()) {
+                                Some(Aabb::new_positive(first.pos, last.pos))
+                            } else {
+                                None
+                            }
+                        }
+                        SelectorStyle::Polygon => {
+                            if path.len() >= 3 {
+                                let mut b = Aabb::new_invalid();
+                                for p in path {
+                                    b.take_point(p.pos);
+                                }
+                                if b.assert_valid().is_ok() {
+                                    Some(b)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
 
-                widget_flags |= self.update_state(engine_view);
+                    if let Some(bounds) = area_bounds
+                        && bounds.extents()[0] >= 5.0
+                        && bounds.extents()[1] >= 5.0
+                    {
+                        let scale = engine_view.camera.scale_factor();
+                        if let Some((_, flags)) = engine_view.store.generate_area_snippet_clipboard(
+                            engine_view.document.config.background,
+                            bounds,
+                            Some(scale),
+                            true,
+                        ) {
+                            widget_flags |= flags;
+                            self.state = SelectorState::AreaSelected { bounds };
+                        } else {
+                            self.state = SelectorState::Idle;
+                        }
+                    } else {
+                        self.state = SelectorState::Idle;
+                    }
+                    widget_flags.redraw = true;
+                }
 
                 EventResult {
                     handled: true,
@@ -500,7 +673,8 @@ impl Selector {
                 match modify_state {
                     ModifyState::Translate { .. }
                     | ModifyState::Rotate { .. }
-                    | ModifyState::Resize { .. } => {
+                    | ModifyState::Resize { .. }
+                    | ModifyState::EditVertex { .. } => {
                         engine_view.store.update_geometry_for_strokes(selection);
                         widget_flags |= engine_view
                             .document
@@ -548,7 +722,9 @@ impl Selector {
         self.pos = Some(element.pos);
 
         let event_result = match &mut self.state {
-            SelectorState::Idle => EventResult {
+            SelectorState::Idle
+            | SelectorState::TextSelected { .. }
+            | SelectorState::AreaSelected { .. } => EventResult {
                 handled: false,
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,
@@ -599,6 +775,22 @@ impl Selector {
                             propagate: EventPropagation::Proceed,
                             progress: PenProgress::InProgress,
                         }
+                    }
+                }
+                _ => EventResult {
+                    handled: false,
+                    propagate: EventPropagation::Proceed,
+                    progress: PenProgress::InProgress,
+                },
+            },
+            SelectorState::TextSelected { .. } | SelectorState::AreaSelected { .. } => match keyboard_key {
+                KeyboardKey::Escape => {
+                    self.state = SelectorState::Idle;
+                    widget_flags.redraw = true;
+                    EventResult {
+                        handled: true,
+                        propagate: EventPropagation::Stop,
+                        progress: PenProgress::Finished,
                     }
                 }
                 _ => EventResult {
@@ -722,7 +914,9 @@ impl Selector {
         self.pos = None;
 
         let event_result = match &mut self.state {
-            SelectorState::Idle => EventResult {
+            SelectorState::Idle
+            | SelectorState::TextSelected { .. }
+            | SelectorState::AreaSelected { .. } => EventResult {
                 handled: false,
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,
@@ -751,7 +945,9 @@ impl Selector {
         self.pos = None;
 
         let event_result = match &mut self.state {
-            SelectorState::Idle => EventResult {
+            SelectorState::Idle
+            | SelectorState::TextSelected { .. }
+            | SelectorState::AreaSelected { .. } => EventResult {
                 handled: false,
                 propagate: EventPropagation::Proceed,
                 progress: PenProgress::Idle,

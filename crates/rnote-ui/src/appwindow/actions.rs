@@ -49,6 +49,8 @@ impl RnAppWindow {
         self.add_action(&action_keyboard_shortcuts_dialog);
         let action_open_canvasmenu = gio::SimpleAction::new("open-canvasmenu", None);
         self.add_action(&action_open_canvasmenu);
+        let action_search = gio::SimpleAction::new("search", None);
+        self.add_action(&action_search);
         let action_open_appmenu = gio::SimpleAction::new("open-appmenu", None);
         self.add_action(&action_open_appmenu);
         let action_toggle_overview = gio::SimpleAction::new("toggle-overview", None);
@@ -57,6 +59,12 @@ impl RnAppWindow {
         self.add_action(&action_devel_menu);
         let action_new_tab = gio::SimpleAction::new("new-tab", None);
         self.add_action(&action_new_tab);
+        let action_new_tab_cornell = gio::SimpleAction::new("new-tab-cornell", None);
+        self.add_action(&action_new_tab_cornell);
+        let action_new_tab_ruled = gio::SimpleAction::new("new-tab-ruled", None);
+        self.add_action(&action_new_tab_ruled);
+        let action_new_tab_grid = gio::SimpleAction::new("new-tab-grid", None);
+        self.add_action(&action_new_tab_grid);
         let action_debug_export_engine_state =
             gio::SimpleAction::new("debug-export-engine-state", None);
         self.add_action(&action_debug_export_engine_state);
@@ -109,6 +117,8 @@ impl RnAppWindow {
         self.add_action(&action_print_doc);
         let action_import_file = gio::SimpleAction::new("import-file", None);
         self.add_action(&action_import_file);
+        let action_open_doc_new_window = gio::SimpleAction::new("open-doc-new-window", None);
+        self.add_action(&action_open_doc_new_window);
         let action_export_doc = gio::SimpleAction::new("export-doc", None);
         self.add_action(&action_export_doc);
         let action_export_doc_pages = gio::SimpleAction::new("export-doc-pages", None);
@@ -123,6 +133,10 @@ impl RnAppWindow {
         self.add_action(&action_text_underline);
         let action_clipboard_copy = gio::SimpleAction::new("clipboard-copy", None);
         self.add_action(&action_clipboard_copy);
+        let action_copy_text = gio::SimpleAction::new("copy-text", None);
+        self.add_action(&action_copy_text);
+        let action_send_to_notebook = gio::SimpleAction::new("send-to-notebook", None);
+        self.add_action(&action_send_to_notebook);
         let action_clipboard_cut = gio::SimpleAction::new("clipboard-cut", None);
         self.add_action(&action_clipboard_cut);
         let action_clipboard_paste = gio::SimpleAction::new("clipboard-paste", None);
@@ -215,6 +229,112 @@ impl RnAppWindow {
             }
         ));
 
+        // Pages navigator
+        let action_show_pages = gio::SimpleAction::new("show-pages", None);
+        self.add_action(&action_show_pages);
+        action_show_pages.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let stack = appwindow.sidebar().sidebar_stack();
+                let split_view = appwindow.split_view();
+                if split_view.shows_sidebar()
+                    && stack.visible_child_name().as_deref() == Some("pages_page")
+                {
+                    split_view.set_show_sidebar(false);
+                } else {
+                    stack.set_visible_child_name("pages_page");
+                    split_view.set_show_sidebar(true);
+                }
+            }
+        ));
+        let action_go_to_next_page = gio::SimpleAction::new("go-to-next-page", None);
+        self.add_action(&action_go_to_next_page);
+        action_go_to_next_page.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let Some(canvas) = appwindow.active_tab_canvas() else {
+                    return;
+                };
+                crate::pagesnavigator::canvas_go_to_adjacent_page(&appwindow, &canvas, true);
+            }
+        ));
+        let action_go_to_prev_page = gio::SimpleAction::new("go-to-prev-page", None);
+        self.add_action(&action_go_to_prev_page);
+        action_go_to_prev_page.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let Some(canvas) = appwindow.active_tab_canvas() else {
+                    return;
+                };
+                crate::pagesnavigator::canvas_go_to_adjacent_page(&appwindow, &canvas, false);
+            }
+        ));
+
+        // Toggle Highlighter
+        let action_toggle_highlighter = gio::SimpleAction::new("toggle-highlighter", None);
+        self.add_action(&action_toggle_highlighter);
+        let action_tool_snippet = gio::SimpleAction::new("tool-snippet", None);
+        self.add_action(&action_tool_snippet);
+        action_toggle_highlighter.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let brush_page = appwindow.overlays().penssidebar().brush_page();
+                let current_brush_style = appwindow.engine_config().read().pens_config.brush_config.style;
+                let active_pen_is_brush = appwindow
+                    .active_tab_canvas()
+                    .map(|c| c.engine_ref().current_pen_style_w_override() == PenStyle::Brush)
+                    .unwrap_or(false);
+
+                if !active_pen_is_brush {
+                    brush_page.switch_brush_style(&appwindow, rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Marker);
+                    appwindow.set_pen_style_with_lock(PenStyle::Brush);
+                    appwindow.overlays().dispatch_toast_text(&gettext("Highlighter active"), Some(std::time::Duration::from_secs(1)));
+                } else if current_brush_style == rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Marker {
+                    brush_page.switch_brush_style(&appwindow, rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Solid);
+                    appwindow.set_pen_style_with_lock(PenStyle::Brush);
+                    appwindow.overlays().dispatch_toast_text(&gettext("Pen active"), Some(std::time::Duration::from_secs(1)));
+                } else {
+                    brush_page.switch_brush_style(&appwindow, rnote_engine::pens::pensconfig::brushconfig::BrushStyle::Marker);
+                    appwindow.set_pen_style_with_lock(PenStyle::Brush);
+                    appwindow.overlays().dispatch_toast_text(&gettext("Highlighter active"), Some(std::time::Duration::from_secs(1)));
+                }
+                appwindow.refresh_ui();
+            }
+        ));
+
+        // Tool Snippet / Crop
+        action_tool_snippet.connect_activate(clone!(
+            #[weak(rename_to=appwindow)]
+            self,
+            move |_, _| {
+                appwindow.set_pen_style_with_lock(PenStyle::Tools);
+                appwindow
+                    .engine_config()
+                    .write()
+                    .pens_config
+                    .tools_config
+                    .style = rnote_engine::pens::pensconfig::toolsconfig::ToolStyle::Snippet;
+                appwindow
+                    .overlays()
+                    .penssidebar()
+                    .tools_page()
+                    .set_tool_style(rnote_engine::pens::pensconfig::toolsconfig::ToolStyle::Snippet);
+                if let Some(canvas) = appwindow.active_tab_canvas() {
+                    let widget_flags = canvas.engine_mut().reinstall_pen_current_style();
+                    canvas.emit_handle_widget_flags(widget_flags);
+                }
+                appwindow.refresh_ui();
+                appwindow.overlays().dispatch_toast_text(
+                    &gettext("Snippet / Crop tool active. Drag to copy, Shift+Drag to cut."),
+                    Some(std::time::Duration::from_secs(2)),
+                );
+            }
+        ));
+
         // About Dialog
         action_about.connect_activate(clone!(
             #[weak(rename_to=appwindow)]
@@ -297,6 +417,79 @@ impl RnAppWindow {
             move |_, _| {
                 let wrapper = appwindow.new_canvas_wrapper();
                 appwindow.append_wrapper_new_tab(&wrapper);
+            }
+        ));
+
+        // Create page with Cornell Notes template
+        action_new_tab_cornell.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let wrapper = appwindow.new_canvas_wrapper();
+                appwindow.append_wrapper_new_tab(&wrapper);
+                let canvas = wrapper.canvas();
+                let widget_flags = {
+                    let mut engine = canvas.engine_mut();
+                    engine.document.config.background.pattern =
+                        rnote_engine::document::background::PatternStyle::Cornell;
+                    engine.document.config.background.pattern_size = Vector2::new(32.0, 30.0);
+                    engine.background_rendering_regenerate()
+                };
+                appwindow.handle_widget_flags(widget_flags, &canvas);
+                appwindow.refresh_ui();
+            }
+        ));
+
+        // Create page with College Ruled template
+        action_new_tab_ruled.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let wrapper = appwindow.new_canvas_wrapper();
+                appwindow.append_wrapper_new_tab(&wrapper);
+                let canvas = wrapper.canvas();
+                let widget_flags = {
+                    let mut engine = canvas.engine_mut();
+                    engine.document.config.background.pattern =
+                        rnote_engine::document::background::PatternStyle::Lines;
+                    engine.document.config.background.pattern_size = Vector2::new(32.0, 26.0);
+                    engine.background_rendering_regenerate()
+                };
+                appwindow.handle_widget_flags(widget_flags, &canvas);
+                appwindow.refresh_ui();
+            }
+        ));
+
+        // Create page with Grid template
+        action_new_tab_grid.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let wrapper = appwindow.new_canvas_wrapper();
+                appwindow.append_wrapper_new_tab(&wrapper);
+                let canvas = wrapper.canvas();
+                let widget_flags = {
+                    let mut engine = canvas.engine_mut();
+                    engine.document.config.background.pattern =
+                        rnote_engine::document::background::PatternStyle::Grid;
+                    engine.document.config.background.pattern_size = Vector2::new(24.0, 24.0);
+                    engine.background_rendering_regenerate()
+                };
+                appwindow.handle_widget_flags(widget_flags, &canvas);
+                appwindow.refresh_ui();
+            }
+        ));
+
+        // Find / Search text
+        action_search.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                let search_box = appwindow.overlays().search_box();
+                let search_entry = appwindow.overlays().search_entry();
+                search_box.set_visible(true);
+                search_entry.grab_focus();
+                search_entry.select_region(0, -1);
             }
         ));
 
@@ -844,7 +1037,7 @@ impl RnAppWindow {
 
         // Open doc
         action_open_doc.connect_activate(clone!(
-            #[weak(rename_to=appwindow)]
+            #[weak(rename_to = appwindow)]
             self,
             move |_, _| {
                 glib::spawn_future_local(clone!(
@@ -852,6 +1045,21 @@ impl RnAppWindow {
                     appwindow,
                     async move {
                         dialogs::import::filedialog_open_doc(&appwindow).await;
+                    }
+                ));
+            }
+        ));
+
+        // Open doc in new window
+        action_open_doc_new_window.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                glib::spawn_future_local(clone!(
+                    #[weak]
+                    appwindow,
+                    async move {
+                        dialogs::import::filedialog_open_doc_in_target(&appwindow, true).await;
                     }
                 ));
             }
@@ -1086,6 +1294,58 @@ impl RnAppWindow {
             }));
         }));
 
+
+        // Copy as Text
+        action_copy_text.connect_activate(clone!(#[weak(rename_to=appwindow)] self, move |_, _| {
+            glib::spawn_future_local(clone!(#[weak] appwindow, async move {
+                let Some(canvas) = appwindow.active_tab_canvas() else {
+                    return;
+                };
+                let engine = canvas.engine_ref();
+                let text_opt = engine.extract_text(None).or_else(|| {
+                    let viewport = engine.camera.viewport();
+                    engine.extract_text(Some(viewport))
+                });
+
+                if let Some(text) = text_opt {
+                    if !text.trim().is_empty() {
+                        appwindow.clipboard().set_text(&text);
+                        let preview: String = text.chars().take(35).collect();
+                        let msg = format!("{}: \"{preview}...\"", gettext("Text copied"));
+                        appwindow.overlays().dispatch_toast_text(&msg, Some(std::time::Duration::from_secs(2)));
+                        return;
+                    }
+                }
+
+                // Fallback to local Apple Vision OCR for scanned PDFs, images, or diagram text
+                let receiver = canvas.engine_ref().fetch_clipboard_content();
+                if let Ok(Ok((content, _))) = receiver.await {
+                    if let Some((png_bytes, _)) = content.iter().find(|(_, mime)| mime == "image/png") {
+                        if let Some(ocr_text) = crate::appwindow::macos_vision_recognize_text(png_bytes) {
+                            if !ocr_text.trim().is_empty() {
+                                appwindow.clipboard().set_text(&ocr_text);
+                                let preview: String = ocr_text.chars().take(35).collect();
+                                let msg = format!("{}: \"{preview}...\"", gettext("Text recognized (OCR)"));
+                                appwindow.overlays().dispatch_toast_text(&msg, Some(std::time::Duration::from_secs(3)));
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                appwindow.overlays().dispatch_toast_text(&gettext("No text found in selection"), Some(std::time::Duration::from_secs(2)));
+            }));
+        }));
+
+        // Send to Resolution Notebook
+        action_send_to_notebook.connect_activate(clone!(
+            #[weak(rename_to = appwindow)]
+            self,
+            move |_, _| {
+                appwindow.send_active_selection_to_resolution_notebook();
+            }
+        ));
+
         // Clipboard cut
         action_clipboard_cut.connect_activate(clone!(#[weak(rename_to=appwindow)] self, move |_, _| {
             glib::spawn_future_local(clone!(#[weak] appwindow, async move {
@@ -1116,6 +1376,7 @@ impl RnAppWindow {
                 appwindow.handle_widget_flags(widget_flags, &canvas);
             }));
         }));
+
 
         // Clipboard paste
         action_clipboard_paste.connect_activate(clone!(
@@ -1194,6 +1455,9 @@ impl RnAppWindow {
             app.set_accels_for_action("win.new-tab", &["<Meta>t", "<Primary>t", "<Ctrl>t"]);
             app.set_accels_for_action("win.snap-positions", &["<Meta><Shift>p", "<Primary><Shift>p", "<Ctrl><Shift>p"]);
             app.set_accels_for_action("win.return-origin-page", &["<Meta>Home", "<Primary>Home", "<Ctrl>Home"]);
+            app.set_accels_for_action("win.show-pages", &["<Meta><Alt>p"]);
+            app.set_accels_for_action("win.go-to-next-page", &["<Meta><Alt>Down", "<Alt>Page_Down"]);
+            app.set_accels_for_action("win.go-to-prev-page", &["<Meta><Alt>Up", "<Alt>Page_Up"]);
             app.set_accels_for_action("win.clear-doc", &["<Meta>l", "<Primary>l", "<Ctrl>l"]);
             app.set_accels_for_action("win.print-doc", &["<Meta>p", "<Primary>p", "<Ctrl>p"]);
             app.set_accels_for_action("win.add-page-to-doc", &["<Meta><Shift>a", "<Primary><Shift>a", "<Ctrl><Shift>a"]);
@@ -1207,7 +1471,10 @@ impl RnAppWindow {
             app.set_accels_for_action("win.import-file", &["<Meta><Shift>i", "<Primary><Shift>i", "<Ctrl><Shift>i"]);
             app.set_accels_for_action("win.undo", &["<Meta>z", "<Primary>z", "<Ctrl>z"]);
             app.set_accels_for_action("win.redo", &["<Meta><Shift>z", "<Primary><Shift>z", "<Ctrl><Shift>z"]);
+            app.set_accels_for_action("win.search", &["<Meta>f", "<Primary>f", "<Ctrl>f"]);
             app.set_accels_for_action("win.clipboard-copy", &["<Meta>c", "<Primary>c", "<Ctrl>c"]);
+            app.set_accels_for_action("win.copy-text", &["<Meta><Shift>c", "<Primary><Shift>c", "<Ctrl><Shift>c", "<Meta><Alt>c"]);
+            app.set_accels_for_action("win.send-to-notebook", &["<Meta>e", "<Primary>e", "<Ctrl>e"]);
             app.set_accels_for_action("win.clipboard-cut", &["<Meta>x", "<Primary>x", "<Ctrl>x"]);
             app.set_accels_for_action("win.clipboard-paste", &["<Meta>v", "<Primary>v", "<Ctrl>v"]);
             app.set_accels_for_action("win.selection-select-all", &["<Meta>a", "<Primary>a", "<Ctrl>a"]);
@@ -1215,6 +1482,8 @@ impl RnAppWindow {
             app.set_accels_for_action("win.text-italic", &["<Meta>i", "<Primary>i", "<Ctrl>i"]);
             app.set_accels_for_action("win.text-underline", &["<Meta>u", "<Primary>u", "<Ctrl>u"]);
             app.set_accels_for_action("win.pen-style::brush", &["<Meta>1", "<Primary>1", "<Ctrl>1", "<Ctrl>KP_1"]);
+            app.set_accels_for_action("win.toggle-highlighter", &["<Meta><Shift>h", "<Primary><Shift>h", "<Ctrl><Shift>h"]);
+            app.set_accels_for_action("win.tool-snippet", &["<Meta><Shift>x", "<Primary><Shift>x", "<Ctrl><Shift>x"]);
             app.set_accels_for_action("win.pen-style::shaper", &["<Meta>2", "<Primary>2", "<Ctrl>2", "<Ctrl>KP_2"]);
             app.set_accels_for_action("win.pen-style::typewriter", &["<Meta>3", "<Primary>3", "<Ctrl>3", "<Ctrl>KP_3"]);
             app.set_accels_for_action("win.pen-style::eraser", &["<Meta>4", "<Primary>4", "<Ctrl>4", "<Ctrl>KP_4"]);
@@ -1251,6 +1520,9 @@ impl RnAppWindow {
             app.set_accels_for_action("win.new-tab", &["<Primary>t", "<Ctrl>t"]);
             app.set_accels_for_action("win.snap-positions", &["<Primary><Shift>p", "<Ctrl><Shift>p"]);
             app.set_accels_for_action("win.return-origin-page", &["<Primary>Home", "<Ctrl>Home"]);
+            app.set_accels_for_action("win.show-pages", &["<Ctrl><Alt>p"]);
+            app.set_accels_for_action("win.go-to-next-page", &["<Ctrl><Alt>Down", "<Alt>Page_Down"]);
+            app.set_accels_for_action("win.go-to-prev-page", &["<Ctrl><Alt>Up", "<Alt>Page_Up"]);
             app.set_accels_for_action("win.clear-doc", &["<Primary>l", "<Ctrl>l"]);
             app.set_accels_for_action("win.print-doc", &["<Primary>p", "<Ctrl>p"]);
             app.set_accels_for_action("win.add-page-to-doc", &["<Primary><Shift>a", "<Ctrl><Shift>a"]);
@@ -1264,7 +1536,10 @@ impl RnAppWindow {
             app.set_accels_for_action("win.import-file", &["<Primary><Shift>i", "<Ctrl><Shift>i"]);
             app.set_accels_for_action("win.undo", &["<Primary>z", "<Ctrl>z"]);
             app.set_accels_for_action("win.redo", &["<Primary><Shift>z", "<Ctrl><Shift>z"]);
+            app.set_accels_for_action("win.search", &["<Primary>f", "<Ctrl>f"]);
             app.set_accels_for_action("win.clipboard-copy", &["<Primary>c", "<Ctrl>c"]);
+            app.set_accels_for_action("win.copy-text", &["<Primary><Shift>c", "<Ctrl><Shift>c", "<Primary><Alt>c"]);
+            app.set_accels_for_action("win.send-to-notebook", &["<Primary>e", "<Ctrl>e"]);
             app.set_accels_for_action("win.clipboard-cut", &["<Primary>x", "<Ctrl>x"]);
             app.set_accels_for_action("win.clipboard-paste", &["<Primary>v", "<Ctrl>v"]);
             app.set_accels_for_action("win.selection-select-all", &["<Primary>a", "<Ctrl>a"]);
@@ -1272,6 +1547,8 @@ impl RnAppWindow {
             app.set_accels_for_action("win.text-italic", &["<Primary>i", "<Ctrl>i"]);
             app.set_accels_for_action("win.text-underline", &["<Primary>u", "<Ctrl>u"]);
             app.set_accels_for_action("win.pen-style::brush", &["<Primary>1", "<Ctrl>1", "<Ctrl>KP_1"]);
+            app.set_accels_for_action("win.toggle-highlighter", &["<Primary><Shift>h", "<Ctrl><Shift>h"]);
+            app.set_accels_for_action("win.tool-snippet", &["<Primary><Shift>x", "<Ctrl><Shift>x"]);
             app.set_accels_for_action("win.pen-style::shaper", &["<Primary>2", "<Ctrl>2", "<Ctrl>KP_2"]);
             app.set_accels_for_action("win.pen-style::typewriter", &["<Primary>3", "<Ctrl>3", "<Ctrl>KP_3"]);
             app.set_accels_for_action("win.pen-style::eraser", &["<Primary>4", "<Ctrl>4", "<Ctrl>KP_4"]);

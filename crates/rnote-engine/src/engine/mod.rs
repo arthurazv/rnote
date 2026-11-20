@@ -26,7 +26,7 @@ use crate::store::StrokeKey;
 use crate::store::render_comp::{self, RenderCompState};
 use crate::strokes::content::GeneratedContentImages;
 use crate::strokes::textstroke::{TextAttribute, TextStyle};
-use crate::{Camera, Document, PenHolder, StrokeStore};
+use crate::{Camera, Document, DrawableOnDoc, PenHolder, StrokeStore};
 use crate::{SelectionCollision, WidgetFlags};
 use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
@@ -331,17 +331,65 @@ impl Engine {
             Arc::make_mut(&mut store_history_entry.stroke_components).remove(key);
         }
 
+        let mut pdf_sources = std::collections::BTreeMap::new();
+        for stroke in store_history_entry.stroke_components.values() {
+            if let crate::strokes::Stroke::BitmapImage(b) = stroke.as_ref()
+                && let Some(ref src) = b.pdf_source
+                && let Some(bytes) = src.resolved_bytes()
+            {
+                let key = format!("{:016x}", src.doc_hash);
+                pdf_sources.entry(key).or_insert_with(|| {
+                    base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        bytes.as_slice(),
+                    )
+                });
+            }
+        }
+
         EngineSnapshot {
             document: self.document.extract_snapshot_data(),
             camera: self.camera.extract_snapshot_data(),
             stroke_components: Arc::clone(&store_history_entry.stroke_components),
             chrono_components: Arc::clone(&store_history_entry.chrono_components),
             chrono_counter: store_history_entry.chrono_counter,
+            pdf_sources,
         }
     }
 
     /// Imports an engine snapshot. A save file should always be loaded with this method.
-    pub fn load_snapshot(&mut self, snapshot: EngineSnapshot) -> WidgetFlags {
+    pub fn load_snapshot(&mut self, mut snapshot: EngineSnapshot) -> WidgetFlags {
+        if !snapshot.pdf_sources.is_empty() {
+            let mut decoded_docs = std::collections::HashMap::new();
+            for (hex_hash, b64) in &snapshot.pdf_sources {
+                if let Ok(doc_hash) = u64::from_str_radix(hex_hash, 16)
+                    && let Ok(raw) =
+                        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+                {
+                    let arc_raw = Arc::new(raw);
+                    crate::strokes::bitmapimage::register_pdf_doc_bytes(
+                        doc_hash,
+                        Arc::clone(&arc_raw),
+                    );
+                    decoded_docs.insert(doc_hash, arc_raw);
+                }
+            }
+            if !decoded_docs.is_empty() {
+                for stroke in Arc::make_mut(&mut snapshot.stroke_components).values_mut() {
+                    if matches!(
+                        stroke.as_ref(),
+                        crate::strokes::Stroke::BitmapImage(b) if b.pdf_source.is_some()
+                    ) {
+                        if let crate::strokes::Stroke::BitmapImage(b) = Arc::make_mut(stroke)
+                            && let Some(ref mut src) = b.pdf_source
+                            && let Some(bytes) = decoded_docs.get(&src.doc_hash)
+                        {
+                            src.pdf_bytes = Some(Arc::clone(bytes));
+                        }
+                    }
+                }
+            }
+        }
         self.document = snapshot.document.extract_snapshot_data();
         self.camera = snapshot.camera.extract_snapshot_data();
         let mut widget_flags = self.store.import_from_snapshot(&snapshot)
@@ -633,6 +681,144 @@ impl Engine {
         self.camera_set_offset_expand(new_offset)
     }
 
+    /// Maximum number of pages that are considered for page navigation (thumbnails, go-to-page).
+    pub const NAVIGATION_PAGES_MAX: usize = 1000;
+
+    /// Bounds of the pages of the document, used for page navigation (e.g. page thumbnails).
+    ///
+    /// For fixed-size and continuous layouts this returns all pages of the document,
+    /// including empty ones. For (semi-)infinite layouts only pages with content are returned.
+    pub fn doc_navigation_pages_bounds(&self) -> Vec<Aabb> {
+        let pages = match self.document.config.layout {
+            Layout::FixedSize | Layout::ContinuousVertical => {
+                self.document.pages_bounds(SplitOrder::default())
+            }
+            Layout::SemiInfinite | Layout::Infinite => {
+                self.pages_bounds_w_content(SplitOrder::default())
+            }
+        };
+        let mut pages = if pages.is_empty() {
+            self.pages_bounds_w_content(SplitOrder::default())
+        } else {
+            pages
+        };
+        pages.truncate(Self::NAVIGATION_PAGES_MAX);
+        pages
+    }
+
+    /// The index of the page in `pages_bounds` that occupies the largest area of the current viewport.
+    pub fn current_page_index(&self, pages_bounds: &[Aabb]) -> Option<usize> {
+        let viewport = self.camera.viewport();
+        pages_bounds
+            .iter()
+            .enumerate()
+            .filter_map(|(i, page)| {
+                let mins = page.mins.max(viewport.mins);
+                let maxs = page.maxs.min(viewport.maxs);
+                let extents = maxs - mins;
+                if extents[0] > 0.0 && extents[1] > 0.0 {
+                    Some((i, extents[0] * extents[1]))
+                } else {
+                    None
+                }
+            })
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i)
+    }
+
+    /// Move the camera so that the top of the given page is at the top of the viewport.
+    ///
+    /// The page is horizontally centered when it fits into the viewport.
+    pub fn camera_go_to_page(&mut self, page_bounds: Aabb) -> WidgetFlags {
+        let zoom = self.camera.total_zoom();
+        let viewport_size = self.camera.size();
+        let page_width = page_bounds.extents()[0] * zoom;
+        let x = if page_width <= viewport_size[0] {
+            (page_bounds.mins[0] + page_bounds.extents()[0] * 0.5) * zoom - viewport_size[0] * 0.5
+        } else {
+            (page_bounds.mins[0] - Document::SHADOW_WIDTH) * zoom
+        };
+        let y = (page_bounds.mins[1] - Document::SHADOW_WIDTH) * zoom;
+        let mut widget_flags = self.camera_set_offset_expand(Vector2::new(x, y));
+        widget_flags |= self.update_rendering_current_viewport();
+        widget_flags.view_modified = true;
+        widget_flags.redraw = true;
+        widget_flags
+    }
+
+    /// Move the camera so that `center` (in document coordinates) is centered in the viewport,
+    /// clamped to surface bounds, and update viewport rendering immediately.
+    pub fn camera_center_at(&mut self, center: Vector2) -> WidgetFlags {
+        let zoom = self.camera.total_zoom();
+        let viewport_size = self.camera.size();
+        let target_offset = center * zoom - viewport_size * 0.5;
+        let mut widget_flags = self.camera_set_offset_expand(target_offset);
+        widget_flags |= self.update_rendering_current_viewport();
+        widget_flags.view_modified = true;
+        widget_flags.redraw = true;
+        widget_flags
+    }
+
+    /// Generate thumbnails for the given pages, rendered in parallel on a background thread pool.
+    ///
+    /// `width_px` is the pixel width of the generated thumbnails.
+    pub fn gen_pages_thumbnails(
+        &self,
+        pages_bounds: Vec<Aabb>,
+        width_px: f64,
+    ) -> oneshot::Receiver<Vec<Option<Image>>> {
+        use rayon::prelude::*;
+
+        let (oneshot_sender, oneshot_receiver) = oneshot::channel::<Vec<Option<Image>>>();
+        let background = self.document.config.background;
+        let pages_content = pages_bounds
+            .into_iter()
+            .map(|bounds| {
+                let keys = self
+                    .store
+                    .stroke_keys_as_rendered_intersecting_bounds(bounds);
+                self.store
+                    .fetch_stroke_content(&keys)
+                    .with_background(background)
+                    .with_bounds(bounds)
+            })
+            .collect::<Vec<StrokeContent>>();
+
+        rayon::spawn(move || {
+            let thumbnails = pages_content
+                .into_par_iter()
+                .map(|content| {
+                    let bounds = content.bounds()?;
+                    let page_width = bounds.extents()[0];
+                    if page_width <= 0.0 {
+                        return None;
+                    }
+                    let image_scale = (width_px / page_width).clamp(0.01, 4.0);
+                    match Image::gen_with_cairo(
+                        |cairo_cx| {
+                            content.draw_to_cairo(cairo_cx, true, true, false, 0.0, image_scale)
+                        },
+                        bounds,
+                        image_scale,
+                    ) {
+                        Ok(image) => Some(image),
+                        Err(e) => {
+                            error!("Generating page thumbnail failed, Err: {e:?}");
+                            None
+                        }
+                    }
+                })
+                .collect::<Vec<Option<Image>>>();
+            if oneshot_sender.send(thumbnails).is_err() {
+                error!(
+                    "Sending page thumbnails to receiver failed. Receiver already dropped."
+                );
+            }
+        });
+
+        oneshot_receiver
+    }
+
     /// Resize the doc when in autoexpanding layouts. called e.g. when finishing a new stroke.
     ///
     /// Background rendering then needs to be updated.
@@ -731,6 +917,11 @@ impl Engine {
     ) -> oneshot::Receiver<anyhow::Result<(Vec<(Vec<u8>, String)>, WidgetFlags)>> {
         self.penholder
             .cut_clipboard_content(&mut engine_view_mut!(self))
+    }
+
+    /// Bounds of the active pen visual feedback on doc (e.g. selection box, laser, etc.).
+    pub fn current_pen_bounds_on_doc(&self) -> Option<p2d::bounding_volume::Aabb> {
+        self.penholder.bounds_on_doc(&engine_view!(self))
     }
 
     pub fn set_doc_layout(&mut self, layout: Layout) -> WidgetFlags {
@@ -909,5 +1100,66 @@ impl Engine {
     pub fn current_pen_style_w_override(&self) -> PenStyle {
         self.penholder
             .current_pen_style_w_override(&engine_view!(self))
+    }
+
+    /// Searches document text across TextStrokes, VectorImages, and BitmapImages.
+    /// Returns matching snippets and document-space bounding boxes sorted in reading order.
+    pub fn search_text(&self, query: &str) -> Vec<crate::textsearch::SearchMatch> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Vec::new();
+        }
+
+        let mut matches = Vec::new();
+        for key in self.store.stroke_keys_as_rendered() {
+            if let Some(stroke) = self.store.get_stroke_ref(key) {
+                match stroke {
+                    crate::strokes::Stroke::VectorImage(v) => {
+                        matches.extend(crate::textsearch::search_image_runs(
+                            &v.text_runs,
+                            &v.rectangle,
+                            query,
+                        ));
+                    }
+                    crate::strokes::Stroke::BitmapImage(b) => {
+                        matches.extend(crate::textsearch::search_image_runs(
+                            &b.text_runs,
+                            &b.rectangle,
+                            query,
+                        ));
+                    }
+                    crate::strokes::Stroke::TextStroke(t) => {
+                        matches.extend(crate::textsearch::search_text_stroke(t, query));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Sort in reading order (top-to-bottom, left-to-right)
+        matches.sort_by(|a, b| {
+            let y_diff = a.bounds.mins[1] - b.bounds.mins[1];
+            if y_diff.abs() > 10.0 {
+                a.bounds.mins[1].total_cmp(&b.bounds.mins[1])
+            } else {
+                a.bounds.mins[0].total_cmp(&b.bounds.mins[0])
+            }
+        });
+
+        matches
+    }
+
+    /// Extracts text contained within the given bounding box (or current selection if None) in natural reading order.
+    pub fn extract_text(&self, bounds: Option<Aabb>) -> Option<String> {
+        let b = bounds.or_else(|| {
+            let selection = self.store.selection_keys_as_rendered();
+            self.store.bounds_for_strokes(&selection)
+        })?;
+        let words = self.store.extract_text_in_bounds(b);
+        if words.is_empty() {
+            None
+        } else {
+            Some(words.join(" "))
+        }
     }
 }

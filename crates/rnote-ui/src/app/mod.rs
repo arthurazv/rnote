@@ -4,7 +4,7 @@ mod appactions;
 // Imports
 use crate::{
     RnAppMenu, RnAppWindow, RnCanvas, RnCanvasMenu, RnCanvasWrapper, RnColorPicker, RnIconPicker,
-    RnMainHeader, RnOverlays, RnPenPicker, RnPensSideBar, RnSettingsPanel, RnSidebar,
+    RnMainHeader, RnOverlays, RnPagesNavigator, RnPenPicker, RnPensSideBar, RnSettingsPanel, RnSidebar,
     RnStrokeContentPreview, RnStrokeWidthPicker, RnUnitEntry, RnWorkspaceBrowser,
     colorpicker::RnColorPad, colorpicker::RnColorSetter, config, penssidebar::RnBrushPage,
     penssidebar::RnEraserPage, penssidebar::RnSelectorPage, penssidebar::RnShaperPage,
@@ -154,6 +154,7 @@ mod imp {
             StrokeWidthPreviewStyle::static_type();
             RnStrokeContentPreview::static_type();
             RnSidebar::static_type();
+            RnPagesNavigator::static_type();
             RnPenPicker::static_type();
         }
 

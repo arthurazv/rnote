@@ -24,6 +24,10 @@ pub struct WidgetFlags {
     pub hide_redo: Option<bool>,
     /// Changes whether text input in the UI toolkit should be enabled.
     pub enable_text_input: Option<bool>,
+    /// Clipboard content to be placed into the system clipboard.
+    pub clipboard_content: Option<Vec<(Vec<u8>, String)>>,
+    /// Toast notification to display when clipboard content is set.
+    pub clipboard_toast: Option<String>,
 }
 
 impl Default for WidgetFlags {
@@ -40,6 +44,8 @@ impl Default for WidgetFlags {
             hide_undo: None,
             hide_redo: None,
             enable_text_input: None,
+            clipboard_content: None,
+            clipboard_toast: None,
         }
     }
 }
@@ -71,6 +77,12 @@ impl std::ops::BitOrAssign for WidgetFlags {
         }
         if rhs.enable_text_input.is_some() {
             self.enable_text_input = rhs.enable_text_input;
+        }
+        if rhs.clipboard_content.is_some() {
+            self.clipboard_content = rhs.clipboard_content;
+        }
+        if rhs.clipboard_toast.is_some() {
+            self.clipboard_toast = rhs.clipboard_toast;
         }
     }
 }

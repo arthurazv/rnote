@@ -34,6 +34,8 @@ pub struct VectorImage {
     pub intrinsic_size: Vector2,
     #[serde(rename = "rectangle")]
     pub rectangle: Rectangle,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_runs: Vec<crate::textsearch::TextRun>,
 }
 
 impl Default for VectorImage {
@@ -42,6 +44,7 @@ impl Default for VectorImage {
             svg_data: String::default(),
             intrinsic_size: Vector2::ZERO,
             rectangle: Rectangle::default(),
+            text_runs: Vec::new(),
         }
     }
 }
@@ -202,6 +205,7 @@ impl VectorImage {
             svg_data,
             intrinsic_size,
             rectangle,
+            text_runs: Vec::new(),
         })
     }
 
@@ -307,6 +311,7 @@ impl VectorImage {
                 let page = pages
                     .get(page_i)
                     .ok_or_else(|| anyhow!("no page at index '{page_i}'"))?;
+                let text_runs = crate::textsearch::extract_text_from_pdf_page(page);
                 let render_cache = hayro_svg::RenderCache::new();
                 let svg_data = hayro_svg::convert(
                     page,
@@ -314,11 +319,13 @@ impl VectorImage {
                     &interpreter_settings,
                     &render_settings,
                 );
-                Self::from_svg_str(
+                let mut img = Self::from_svg_str(
                     svg_data.as_str(),
                     bounds.mins,
                     ImageSizeOption::ImposeSize(bounds.extents()),
-                )
+                )?;
+                img.text_runs = text_runs;
+                Ok(img)
             })
             .collect()
     }

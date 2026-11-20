@@ -24,6 +24,8 @@ pub enum SelectorStyle {
     Single,
     #[serde(rename = "intersectingpath")]
     IntersectingPath,
+    #[serde(rename = "text")]
+    Text,
 }
 
 impl Default for SelectorStyle {

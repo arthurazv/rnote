@@ -53,6 +53,10 @@ pub(super) enum ModifyState {
         start_pos: Vector2,
         last_rendered_bounds: Aabb,
     },
+    EditVertex {
+        stroke_key: StrokeKey,
+        vertex_index: usize,
+    },
 }
 
 impl Default for ModifyState {
@@ -66,6 +70,14 @@ pub(super) enum SelectorState {
     Idle,
     Selecting {
         path: Vec<Element>,
+    },
+    TextSelected {
+        bounds: Aabb,
+        word_boxes: Vec<Aabb>,
+        text: String,
+    },
+    AreaSelected {
+        bounds: Aabb,
     },
     ModifySelection {
         modify_state: ModifyState,
@@ -110,6 +122,14 @@ impl PenBehaviour for Selector {
 
     fn update_state(&mut self, engine_view: &mut EngineViewMut) -> WidgetFlags {
         let mut widget_flags = WidgetFlags::default();
+
+        if matches!(
+            self.state,
+            SelectorState::TextSelected { .. } | SelectorState::AreaSelected { .. }
+        ) {
+            widget_flags.redraw = true;
+            return widget_flags;
+        }
 
         let selection = engine_view.store.selection_keys_as_rendered();
 
@@ -161,19 +181,55 @@ impl PenBehaviour for Selector {
         &self,
         engine_view: &EngineView,
     ) -> oneshot::Receiver<anyhow::Result<(Vec<(Vec<u8>, String)>, WidgetFlags)>> {
-        let widget_flags = WidgetFlags::default();
+        let mut widget_flags = WidgetFlags::default();
         let (sender, receiver) =
             oneshot::channel::<anyhow::Result<(Vec<(Vec<u8>, String)>, WidgetFlags)>>();
         let mut clipboard_content = Vec::with_capacity(1);
 
-        let stroke_content = if let SelectorState::ModifySelection { selection, .. } = &self.state {
-            Some(engine_view.store.fetch_stroke_content(selection))
+        let area_clipboard = if let SelectorState::AreaSelected { bounds } = &self.state {
+            let scale = engine_view.camera.scale_factor();
+            engine_view.store.generate_area_snippet_clipboard(
+                engine_view.document.config.background,
+                *bounds,
+                Some(scale),
+                true,
+            )
         } else {
             None
         };
 
+        if let Some((clip_content, flags)) = area_clipboard {
+            widget_flags |= flags;
+            let _ = sender.send(Ok((clip_content, widget_flags)));
+            return receiver;
+        }
+
+        let (stroke_content, extracted_text) = match &self.state {
+            SelectorState::TextSelected { text, .. } => (None, Some(text.clone())),
+            SelectorState::ModifySelection {
+                selection,
+                selection_bounds,
+                ..
+            } => {
+                let sc = engine_view.store.fetch_stroke_content(selection);
+                let words = engine_view.store.extract_text_in_bounds(*selection_bounds);
+                let text_opt = if !words.is_empty() {
+                    Some(words.join(" "))
+                } else {
+                    None
+                };
+                (Some(sc), text_opt)
+            }
+            _ => (None, None),
+        };
+
         rayon::spawn(move || {
             let result = move || {
+                // Extract text FIRST so text editors receive plain text!
+                if let Some(ref text) = extracted_text {
+                    clipboard_content.push((text.as_bytes().to_vec(), "text/plain".to_string()));
+                }
+
                 if let Some(stroke_content) = stroke_content {
                     let stroke_content_svg = stroke_content.gen_svg(
                         false,
@@ -199,6 +255,10 @@ impl PenBehaviour for Selector {
                             .into_encoded_bytes(image::ImageFormat::Png, None)?;
                         clipboard_content.push((image, String::from("image/png")));
                     }
+                }
+                if let Some(ref text) = extracted_text {
+                    let preview: String = text.chars().take(35).collect();
+                    widget_flags.clipboard_toast = Some(format!("Text copied: \"{preview}...\""));
                 }
                 Ok((clipboard_content, widget_flags))
             };
@@ -221,20 +281,56 @@ impl PenBehaviour for Selector {
         let mut widget_flags = WidgetFlags::default();
         let mut clipboard_content = Vec::with_capacity(1);
 
-        let stroke_content = if let SelectorState::ModifySelection { selection, .. } = &self.state {
+        let area_cut = if let SelectorState::AreaSelected { bounds } = &self.state {
+            let scale = engine_view.camera.scale_factor();
+            let clip = engine_view.store.generate_area_snippet_clipboard(
+                engine_view.document.config.background,
+                *bounds,
+                Some(scale),
+                true,
+            );
+            self.state = SelectorState::Idle;
+            widget_flags.redraw = true;
+            clip
+        } else {
+            None
+        };
+
+        if let Some((clip_content, flags)) = area_cut {
+            widget_flags |= flags;
+            let _ = sender.send(Ok((clip_content, widget_flags)));
+            return receiver;
+        }
+
+        let (stroke_content, extracted_text) = if let SelectorState::ModifySelection {
+            selection,
+            selection_bounds,
+            ..
+        } = &self.state
+        {
+            let words = engine_view.store.extract_text_in_bounds(*selection_bounds);
+            let text_opt = if !words.is_empty() {
+                Some(words.join(" "))
+            } else {
+                None
+            };
             let c = Some(engine_view.store.cut_stroke_content(selection));
             self.state = SelectorState::Idle;
             widget_flags |= engine_view.store.record(Instant::now());
             widget_flags.store_modified = true;
             widget_flags.redraw = true;
-            c
+            (c, text_opt)
         } else {
-            None
+            (None, None)
         };
 
         rayon::spawn(move || {
             let result = move || {
                 if let Some(stroke_content) = stroke_content {
+                    if let Some(ref text) = extracted_text {
+                        clipboard_content.push((text.as_bytes().to_vec(), "text/plain".to_string()));
+                    }
+
                     let stroke_content_svg = stroke_content.gen_svg(
                         false,
                         false,
@@ -260,6 +356,10 @@ impl PenBehaviour for Selector {
                         clipboard_content.push((image, String::from("image/png")));
                     }
                 }
+                if let Some(ref text) = extracted_text {
+                    let preview: String = text.chars().take(35).collect();
+                    widget_flags.clipboard_toast = Some(format!("Text copied: \"{preview}...\""));
+                }
                 Ok((clipboard_content, widget_flags))
             };
             if sender.send(result()).is_err() {
@@ -277,6 +377,8 @@ impl DrawableOnDoc for Selector {
 
         match &self.state {
             SelectorState::Idle => None,
+            SelectorState::TextSelected { bounds, .. } => Some(bounds.loosened(10.0 / total_zoom)),
+            SelectorState::AreaSelected { bounds } => Some(bounds.loosened(10.0 / total_zoom)),
             SelectorState::Selecting { path } => {
                 // Making sure bounds are always outside of coord + width
                 let mut path_iter = path.iter();
@@ -315,8 +417,95 @@ impl DrawableOnDoc for Selector {
 
         match &self.state {
             SelectorState::Idle => {}
+            SelectorState::TextSelected {
+                bounds, word_boxes, ..
+            } => {
+                let fill_color = piet::Color::rgba8(53, 132, 228, 95);
+                let border_color = piet::Color::rgba8(53, 132, 228, 180);
+
+                if !word_boxes.is_empty() {
+                    for wb in word_boxes {
+                        let rect = wb.loosened(1.5 / total_zoom).to_kurbo_rect();
+                        cx.fill(rect, &fill_color);
+                        cx.stroke(rect, &border_color, 1.0 / total_zoom);
+                    }
+                } else {
+                    let select_rect = bounds.to_kurbo_rect();
+                    cx.fill(select_rect, &fill_color);
+                    cx.stroke(select_rect, &border_color, 1.0 / total_zoom);
+                }
+            }
+            SelectorState::AreaSelected { bounds } => {
+                let line_width = 1.5 / total_zoom;
+                let rect = bounds.to_kurbo_rect();
+
+                // Semi-transparent blue highlight fill
+                let fill_color = piet::Color::rgba(0.21, 0.52, 0.89, 0.15);
+                cx.fill(rect, &fill_color);
+
+                // Dashed border
+                let stroke_color = color::GNOME_BLUES[3];
+                const DASH_PATTERN: &[f64] = &[6.0, 4.0];
+                let stroke_style = piet::StrokeStyle::new()
+                    .dash_pattern(DASH_PATTERN)
+                    .line_cap(piet::LineCap::Round)
+                    .line_join(piet::LineJoin::Round);
+                cx.stroke_styled(rect, &stroke_color, line_width, &stroke_style);
+
+                // Corner accents (4 corners)
+                let corner_len = (10.0 / total_zoom).min(bounds.extents()[0] * 0.3).min(bounds.extents()[1] * 0.3);
+                let corner_style = piet::StrokeStyle::new()
+                    .line_cap(piet::LineCap::Square)
+                    .line_join(piet::LineJoin::Round);
+                let corner_color = color::GNOME_BLUES[4];
+                let corner_width = 2.5 / total_zoom;
+
+                // Top-left
+                let mut p = piet::kurbo::BezPath::new();
+                p.move_to((bounds.mins[0], bounds.mins[1] + corner_len));
+                p.line_to((bounds.mins[0], bounds.mins[1]));
+                p.line_to((bounds.mins[0] + corner_len, bounds.mins[1]));
+                cx.stroke_styled(p, &corner_color, corner_width, &corner_style);
+
+                // Top-right
+                let mut p = piet::kurbo::BezPath::new();
+                p.move_to((bounds.maxs[0] - corner_len, bounds.mins[1]));
+                p.line_to((bounds.maxs[0], bounds.mins[1]));
+                p.line_to((bounds.maxs[0], bounds.mins[1] + corner_len));
+                cx.stroke_styled(p, &corner_color, corner_width, &corner_style);
+
+                // Bottom-right
+                let mut p = piet::kurbo::BezPath::new();
+                p.move_to((bounds.maxs[0], bounds.maxs[1] - corner_len));
+                p.line_to((bounds.maxs[0], bounds.maxs[1]));
+                p.line_to((bounds.maxs[0] - corner_len, bounds.maxs[1]));
+                cx.stroke_styled(p, &corner_color, corner_width, &corner_style);
+
+                // Bottom-left
+                let mut p = piet::kurbo::BezPath::new();
+                p.move_to((bounds.mins[0] + corner_len, bounds.maxs[1]));
+                p.line_to((bounds.mins[0], bounds.maxs[1]));
+                p.line_to((bounds.mins[0], bounds.maxs[1] - corner_len));
+                cx.stroke_styled(p, &corner_color, corner_width, &corner_style);
+            }
             SelectorState::Selecting { path } => {
                 match engine_view.config.pens_config.selector_config.style {
+                    SelectorStyle::Text => {
+                        if let Some(first) = path.first()
+                            && let Some(last) = path.last()
+                        {
+                            let select_rect = kurbo::Rect::from_points(
+                                first.pos.to_kurbo_point(),
+                                last.pos.to_kurbo_point(),
+                            );
+                            cx.fill(select_rect, &piet::Color::rgba8(53, 132, 228, 80));
+                            cx.stroke(
+                                select_rect,
+                                &piet::Color::rgba8(53, 132, 228, 220),
+                                1.5 / total_zoom,
+                            );
+                        }
+                    }
                     SelectorStyle::Polygon => {
                         let mut bez_path = kurbo::BezPath::new();
                         let mut path_iter = path.iter();
@@ -436,6 +625,22 @@ impl DrawableOnDoc for Selector {
                     engine_view.document.config.background.color,
                 )?;
 
+                if let Some((_key, shapestroke)) =
+                    Self::single_selected_shape(selection, engine_view.store)
+                {
+                    let active_vertex = match modify_state {
+                        ModifyState::EditVertex { vertex_index, .. } => Some(*vertex_index),
+                        _ => None,
+                    };
+                    Self::draw_shape_vertex_nodes(
+                        cx,
+                        &shapestroke.shape,
+                        active_vertex,
+                        self.pos,
+                        engine_view.camera,
+                    )?;
+                }
+
                 match modify_state {
                     ModifyState::Rotate {
                         rotation_center,
@@ -475,17 +680,75 @@ impl Selector {
     const RESIZE_NODE_SIZE: Vector2 = Vector2::splat(18.0);
     /// Rotate node diameter, in surface coordinates.
     const ROTATE_NODE_DIAMETER: f64 = 18.0;
+    /// Shape vertex node radius, in surface coordinates.
+    const VERTEX_NODE_RADIUS: f64 = 7.0;
     /// The outline color when drawing a selection
     const SELECTION_OUTLINE_COLOR: piet::Color = color::GNOME_BRIGHTS[4].with_a8(240);
     /// The fill color when drawing a selection
     const SELECTION_FILL_COLOR: piet::Color = color::GNOME_BRIGHTS[2].with_a8(13);
+
+    pub(super) fn single_selected_shape<'a>(
+        selection: &[StrokeKey],
+        store: &'a crate::StrokeStore,
+    ) -> Option<(StrokeKey, &'a crate::strokes::ShapeStroke)> {
+        if selection.len() != 1 {
+            return None;
+        }
+        let key = selection[0];
+        if let Some(crate::strokes::Stroke::ShapeStroke(shapestroke)) = store.get_stroke_ref(key) {
+            Some((key, shapestroke))
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn vertex_node_sphere(pos: Vector2, camera: &Camera) -> BoundingSphere {
+        BoundingSphere::new(
+            pos.into(),
+            (Self::VERTEX_NODE_RADIUS + 3.0) / camera.total_zoom(),
+        )
+    }
+
+    fn draw_shape_vertex_nodes(
+        cx: &mut piet_cairo::CairoRenderContext,
+        shape: &rnote_compose::shapes::Shape,
+        active_vertex: Option<usize>,
+        pointer_pos: Option<Vector2>,
+        camera: &Camera,
+    ) -> anyhow::Result<()> {
+        let total_zoom = camera.total_zoom();
+        let radius = Self::VERTEX_NODE_RADIUS / total_zoom;
+        let stroke_width = 1.8 / total_zoom;
+
+        for (i, pos) in crate::pens::shaperecognizer::shape_control_vertices(shape)
+            .into_iter()
+            .enumerate()
+        {
+            let is_active = active_vertex == Some(i)
+                || pointer_pos
+                    .is_some_and(|p| Self::vertex_node_sphere(pos, camera).contains_local_point(p));
+
+            let fill_color = if is_active {
+                color::GNOME_BLUES[3].with_a8(240)
+            } else {
+                piet::Color::WHITE.with_a8(245)
+            };
+            let border_color = color::GNOME_BLUES[4];
+
+            let circle = kurbo::Circle::new((pos.x, pos.y), radius);
+            cx.fill(circle, &fill_color);
+            cx.stroke(circle, &border_color, stroke_width);
+        }
+
+        Ok(())
+    }
 
     fn add_to_select_path(style: SelectorStyle, path: &mut Vec<Element>, element: Element) {
         match style {
             SelectorStyle::Polygon | SelectorStyle::Single | SelectorStyle::IntersectingPath => {
                 path.push(element);
             }
-            SelectorStyle::Rectangle => {
+            SelectorStyle::Rectangle | SelectorStyle::Text => {
                 path.push(element);
 
                 if path.len() > 2 {
