@@ -160,6 +160,15 @@ impl RnWorkspaceListEntry {
             .build()
     }
 
+    pub(crate) fn from_parts(dir: PathBuf, icon: String, color: piet::Color, name: String) -> Self {
+        Self::new(RnWorkspaceListEntryInner {
+            dir,
+            icon,
+            color: color.as_rgba_u32(),
+            name,
+        })
+    }
+
     pub(crate) fn replace_data(&self, entry: &Self) {
         self.set_name(entry.name());
         self.set_icon(entry.icon());

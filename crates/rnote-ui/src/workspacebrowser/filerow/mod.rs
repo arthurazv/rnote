@@ -102,6 +102,17 @@ mod imp {
                     let current_file = value
                         .get::<Option<gio::File>>()
                         .expect("The value needs to be of type `Option<gio::File>`");
+                    let is_dir = current_file
+                        .as_ref()
+                        .and_then(|f| f.path())
+                        .is_some_and(|p| p.is_dir());
+                    if let Some(action) = self
+                        .action_group
+                        .lookup_action("pin-notebook")
+                        .and_then(|a| a.downcast::<gio::SimpleAction>().ok())
+                    {
+                        action.set_enabled(is_dir);
+                    }
                     self.current_file.replace(current_file);
                 }
                 "position" => {
@@ -251,5 +262,12 @@ impl RnFileRow {
         self.imp()
             .action_group
             .add_action(&actions::duplicate(self, appwindow));
+        let pin_action = actions::pin_notebook(self, appwindow);
+        let is_dir = self
+            .current_file()
+            .and_then(|f| f.path())
+            .is_some_and(|p| p.is_dir());
+        pin_action.set_enabled(is_dir);
+        self.imp().action_group.add_action(&pin_action);
     }
 }

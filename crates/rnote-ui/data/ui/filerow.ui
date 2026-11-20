@@ -77,6 +77,10 @@
             <attribute name="label" translatable="yes">Duplicate</attribute>
             <attribute name="action">filerow.duplicate</attribute>
           </item>
+          <item>
+            <attribute name="label" translatable="yes">Pin as Notebook</attribute>
+            <attribute name="action">filerow.pin-notebook</attribute>
+          </item>
         </section>
       </menu>
     </object>

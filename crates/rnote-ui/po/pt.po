@@ -2869,3 +2869,57 @@ msgstr "Selecione uma área ou questão primeiro!"
 msgid "Text recognized (OCR)"
 msgstr "Texto reconhecido (OCR)"
 
+msgid "Insert Markdown Block"
+msgstr "Inserir Bloco Markdown"
+
+msgid "Insert Markdown Block…"
+msgstr "Inserir Bloco Markdown…"
+
+msgid "Copy as Markdown"
+msgstr "Copiar como Markdown"
+
+msgid "Copied as Markdown"
+msgstr "Copiado como Markdown"
+
+msgid "Markdown block pasted"
+msgstr "Bloco Markdown colado"
+
+msgid "Insert"
+msgstr "Inserir"
+
+msgid "Create"
+msgstr "Criar"
+
+msgid "New Notebook"
+msgstr "Novo Caderno"
+
+msgid "New Notebook…"
+msgstr "Novo Caderno…"
+
+msgid "Subject or notebook name"
+msgstr "Nome da matéria ou caderno"
+
+msgid "Pin notebook to sidebar"
+msgstr "Fixar caderno na barra lateral"
+
+msgid "Open new tab for this notebook"
+msgstr "Abrir nova aba para este caderno"
+
+msgid "Notebook created"
+msgstr "Caderno criado"
+
+msgid "Notebook folder already exists"
+msgstr "A pasta do caderno já existe"
+
+msgid "Creating notebook failed"
+msgstr "Falha ao criar o caderno"
+
+msgid "Pin as Notebook"
+msgstr "Fixar como Caderno"
+
+msgid "Pinned as Notebook"
+msgstr "Fixado como Caderno"
+
+msgid "Notebook already pinned"
+msgstr "Caderno já está fixado"
+

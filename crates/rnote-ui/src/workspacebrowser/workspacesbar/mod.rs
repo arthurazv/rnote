@@ -127,6 +127,31 @@ impl RnWorkspacesBar {
         self.select_workspace_by_index(n_items.saturating_sub(1));
     }
 
+    pub(crate) fn find_workspace_by_dir(&self, dir: &std::path::Path) -> Option<u32> {
+        let target = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+        for (i, entry) in self.imp().workspace_list.to_vec().into_iter().enumerate() {
+            let entry_path = PathBuf::from(entry.dir());
+            let resolved = entry_path.canonicalize().unwrap_or(entry_path);
+            if resolved == target {
+                return Some(i as u32);
+            }
+        }
+        None
+    }
+
+    /// Adds the workspace entry to the sidebar if its directory is not already pinned,
+    /// or selects the existing entry if already present. Returns `true` if newly added.
+    pub(crate) fn add_or_select_workspace(&self, entry: RnWorkspaceListEntry) -> bool {
+        let dir = PathBuf::from(entry.dir());
+        if let Some(existing_idx) = self.find_workspace_by_dir(&dir) {
+            self.select_workspace_by_index(existing_idx);
+            false
+        } else {
+            self.push_workspace(entry);
+            true
+        }
+    }
+
     pub(crate) fn insert_workspace_entry(&self, i: u32, entry: RnWorkspaceListEntry) {
         self.imp().workspace_list.insert(i as usize, entry);
         self.select_workspace_by_index(i);
