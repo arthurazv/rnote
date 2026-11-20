@@ -1162,4 +1162,32 @@ impl Engine {
             Some(words.join(" "))
         }
     }
+
+    /// Exports selected `TextStroke`s (or active Typewriter stroke) back into Markdown format.
+    /// Falls back to `extract_text(bounds)` when no `TextStroke` is selected.
+    pub fn extract_markdown(&self, bounds: Option<Aabb>) -> Option<String> {
+        let mut md_blocks: Vec<String> = Vec::new();
+        for key in self.store.selection_keys_as_rendered() {
+            if let Some(crate::strokes::Stroke::TextStroke(ts)) = self.store.get_stroke_ref(key) {
+                let md = crate::strokes::markdown::textstroke_to_markdown(ts);
+                if !md.trim().is_empty() {
+                    md_blocks.push(md);
+                }
+            }
+        }
+        if md_blocks.is_empty() {
+            if let Some(key) = self.penholder.active_typewriter_stroke_key() {
+                if let Some(crate::strokes::Stroke::TextStroke(ts)) = self.store.get_stroke_ref(key) {
+                    let md = crate::strokes::markdown::textstroke_to_markdown(ts);
+                    if !md.trim().is_empty() {
+                        md_blocks.push(md);
+                    }
+                }
+            }
+        }
+        if !md_blocks.is_empty() {
+            return Some(md_blocks.join("\n\n"));
+        }
+        self.extract_text(bounds)
+    }
 }

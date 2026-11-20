@@ -673,21 +673,76 @@ impl Typewriter {
 
     /// Insert text either at the current cursor position or, if the state is idle, in a new textstroke.
     ///
-    /// Inserts at the given position, if supplied. Else at a default offset.
+    pub(crate) fn active_stroke_key(&self) -> Option<StrokeKey> {
+        match &self.state {
+            TypewriterState::Modifying { stroke_key, .. } => Some(*stroke_key),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn insert_markdown(
+        &mut self,
+        markdown: String,
+        preferred_pos: Option<Vector2>,
+        engine_view: &mut EngineViewMut,
+    ) -> WidgetFlags {
+        let base_width = engine_view
+            .config
+            .pens_config
+            .typewriter_config
+            .text_width();
+        let mut base_style = engine_view
+            .config
+            .pens_config
+            .typewriter_config
+            .text_style
+            .clone();
+        base_style.ranged_text_attributes.clear();
+        let (rendered, attrs) =
+            crate::strokes::markdown::parse_markdown_to_text_parts(&markdown, &base_style);
+        self.insert_styled_text(
+            rendered,
+            attrs,
+            Some(base_width.max(760.0)),
+            preferred_pos,
+            engine_view,
+        )
+    }
+
+    /// Inserts text at the given position, if supplied, automatically formatting Markdown blocks when detected.
     pub(crate) fn insert_text(
         &mut self,
         text: String,
         preferred_pos: Option<Vector2>,
         engine_view: &mut EngineViewMut,
     ) -> WidgetFlags {
+        if crate::strokes::markdown::looks_like_markdown(&text) {
+            return self.insert_markdown(text, preferred_pos, engine_view);
+        }
+        self.insert_styled_text(text, Vec::new(), None, preferred_pos, engine_view)
+    }
+
+    /// Inserts text with explicit ranged attributes.
+    ///
+    /// Inserts at the given position, if supplied. Else at a default offset.
+    pub(crate) fn insert_styled_text(
+        &mut self,
+        text: String,
+        ranged_attrs: Vec<RangedTextAttribute>,
+        preferred_width: Option<f64>,
+        preferred_pos: Option<Vector2>,
+        engine_view: &mut EngineViewMut,
+    ) -> WidgetFlags {
         let pos = preferred_pos
             .unwrap_or_else(|| engine_view.camera.viewport().mins + Stroke::IMPORT_OFFSET_DEFAULT);
         let mut widget_flags = WidgetFlags::default();
-        let text_width = engine_view
-            .config
-            .pens_config
-            .typewriter_config
-            .text_width();
+        let text_width = preferred_width.unwrap_or_else(|| {
+            engine_view
+                .config
+                .pens_config
+                .typewriter_config
+                .text_width()
+        });
         let mut text_style = engine_view
             .config
             .pens_config
@@ -695,10 +750,26 @@ impl Typewriter {
             .text_style
             .clone();
 
+        let apply_shifted_attrs =
+            |textstroke: &mut TextStroke, insert_offset: usize, attrs: Vec<RangedTextAttribute>| {
+                let text_len = textstroke.text.len();
+                for mut attr in attrs {
+                    attr.range.start = attr.range.start.saturating_add(insert_offset);
+                    attr.range.end = attr.range.end.saturating_add(insert_offset);
+                    if attr.range.start < attr.range.end
+                        && attr.range.end <= text_len
+                        && textstroke.text.is_char_boundary(attr.range.start)
+                        && textstroke.text.is_char_boundary(attr.range.end)
+                    {
+                        textstroke.text_style.ranged_text_attributes.push(attr);
+                    }
+                }
+            };
+
         match &mut self.state {
             TypewriterState::Idle => {
                 let text_len = text.len();
-                text_style.ranged_text_attributes.clear();
+                text_style.ranged_text_attributes = ranged_attrs;
                 text_style.set_max_width(Some(text_width));
                 let textstroke = TextStroke::new(text, pos, text_style);
                 let cursor = GraphemeCursor::new(text_len, textstroke.text.len(), true);
@@ -725,7 +796,7 @@ impl Typewriter {
             }
             TypewriterState::Start(pos) => {
                 let text_len = text.len();
-                text_style.ranged_text_attributes.clear();
+                text_style.ranged_text_attributes = ranged_attrs;
                 text_style.set_max_width(Some(text_width));
                 let textstroke = TextStroke::new(text, *pos, text_style);
                 let cursor = GraphemeCursor::new(text_len, textstroke.text.len(), true);
@@ -762,11 +833,13 @@ impl Typewriter {
                     if let Some(Stroke::TextStroke(textstroke)) =
                         engine_view.store.get_stroke_mut(*stroke_key)
                     {
+                        let insert_offset = cursor.cur_cursor().min(selection_cursor.cur_cursor());
                         textstroke.replace_text_between_selection_cursors(
                             cursor,
                             selection_cursor,
                             text.as_str(),
                         );
+                        apply_shifted_attrs(textstroke, insert_offset, ranged_attrs);
                         engine_view.store.update_geometry_for_stroke(*stroke_key);
                         engine_view.store.regenerate_rendering_for_stroke(
                             *stroke_key,
@@ -792,7 +865,9 @@ impl Typewriter {
                     if let Some(Stroke::TextStroke(textstroke)) =
                         engine_view.store.get_stroke_mut(*stroke_key)
                     {
+                        let insert_offset = cursor.cur_cursor();
                         textstroke.insert_text_after_cursor(text.as_str(), cursor);
+                        apply_shifted_attrs(textstroke, insert_offset, ranged_attrs);
                         engine_view.store.update_geometry_for_stroke(*stroke_key);
                         engine_view.store.regenerate_rendering_for_stroke(
                             *stroke_key,

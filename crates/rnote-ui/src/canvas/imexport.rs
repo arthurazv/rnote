@@ -181,6 +181,21 @@ impl RnCanvas {
         Ok(())
     }
 
+    /// Parses and inserts a formatted Markdown block at `target_pos`.
+    pub(crate) fn load_in_markdown(
+        &self,
+        markdown: String,
+        target_pos: Option<Vector2>,
+    ) -> anyhow::Result<()> {
+        let pos = self.determine_stroke_import_pos(target_pos);
+
+        let widget_flags = self.engine_mut().insert_markdown(markdown, Some(pos));
+
+        self.emit_handle_widget_flags(widget_flags);
+        self.set_empty(false);
+        Ok(())
+    }
+
     /// Deserializes the stroke content and inserts it into the engine.
     ///
     /// The data is usually coming from the clipboard, drop source, etc.

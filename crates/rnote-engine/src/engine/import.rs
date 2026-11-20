@@ -358,6 +358,24 @@ impl Engine {
         widget_flags
     }
 
+    /// Parse and insert a Markdown text block directly via the Typewriter pen.
+    pub fn insert_markdown(&mut self, markdown: String, pos: Option<Vector2>) -> WidgetFlags {
+        let mut widget_flags = WidgetFlags::default();
+
+        let all_strokes = self.store.stroke_keys_as_rendered();
+        self.store.set_selected_keys(&all_strokes, false);
+
+        widget_flags |= self.change_pen_style(PenStyle::Typewriter);
+
+        widget_flags |= self
+            .penholder
+            .insert_markdown(markdown, pos, &mut engine_view_mut!(self));
+
+        widget_flags |= self.store.record(Instant::now());
+        widget_flags.redraw = true;
+        widget_flags
+    }
+
     /// Insert the stroke content.
     ///
     /// The data usually comes from the clipboard, drag-and-drop, ..

@@ -135,6 +135,10 @@ impl RnAppWindow {
         self.add_action(&action_clipboard_copy);
         let action_copy_text = gio::SimpleAction::new("copy-text", None);
         self.add_action(&action_copy_text);
+        let action_copy_markdown = gio::SimpleAction::new("copy-markdown", None);
+        self.add_action(&action_copy_markdown);
+        let action_insert_markdown = gio::SimpleAction::new("insert-markdown", None);
+        self.add_action(&action_insert_markdown);
         let action_send_to_notebook = gio::SimpleAction::new("send-to-notebook", None);
         self.add_action(&action_send_to_notebook);
         let action_clipboard_cut = gio::SimpleAction::new("clipboard-cut", None);
@@ -1337,6 +1341,167 @@ impl RnAppWindow {
             }));
         }));
 
+        // Copy as Markdown (Ctrl/Cmd + Alt + Shift + C)
+        action_copy_markdown.connect_activate(clone!(
+            #[weak(rename_to=appwindow)]
+            self,
+            move |_, _| {
+                let Some(canvas) = appwindow.active_tab_canvas() else {
+                    return;
+                };
+                if let Some(md) = canvas.engine_ref().extract_markdown(None) {
+                    if !md.trim().is_empty() {
+                        appwindow.clipboard().set_text(&md);
+                        appwindow.overlays().dispatch_toast_text(
+                            &gettext("Copied as Markdown"),
+                            Some(std::time::Duration::from_secs(2)),
+                        );
+                        return;
+                    }
+                }
+                appwindow.overlays().dispatch_toast_text(
+                    &gettext("No text found in selection"),
+                    Some(std::time::Duration::from_secs(2)),
+                );
+            }
+        ));
+
+        // Insert Markdown Block dialog (Ctrl/Cmd + Shift + M)
+        action_insert_markdown.connect_activate(clone!(
+            #[weak(rename_to=appwindow)]
+            self,
+            move |_, _| {
+                use adw::prelude::AdwDialogExt;
+
+                let text_view = gtk4::TextView::builder()
+                    .monospace(true)
+                    .wrap_mode(gtk4::WrapMode::WordChar)
+                    .top_margin(8)
+                    .bottom_margin(8)
+                    .left_margin(8)
+                    .right_margin(8)
+                    .build();
+
+                let scrolled = gtk4::ScrolledWindow::builder()
+                    .min_content_width(460)
+                    .min_content_height(240)
+                    .has_frame(true)
+                    .vexpand(true)
+                    .hexpand(true)
+                    .child(&text_view)
+                    .build();
+
+                let paste_btn = gtk4::Button::with_label(&gettext("Paste Clipboard"));
+                let cancel_btn = gtk4::Button::with_label(&gettext("Cancel"));
+                let insert_btn = gtk4::Button::with_label(&gettext("Insert"));
+                insert_btn.add_css_class("suggested-action");
+
+                let btn_box = gtk4::Box::builder()
+                    .orientation(gtk4::Orientation::Horizontal)
+                    .spacing(8)
+                    .build();
+                btn_box.append(&paste_btn);
+                let spacer = gtk4::Box::builder().hexpand(true).build();
+                btn_box.append(&spacer);
+                btn_box.append(&cancel_btn);
+                btn_box.append(&insert_btn);
+
+                let content_box = gtk4::Box::builder()
+                    .orientation(gtk4::Orientation::Vertical)
+                    .spacing(12)
+                    .margin_top(16)
+                    .margin_bottom(16)
+                    .margin_start(16)
+                    .margin_end(16)
+                    .build();
+                content_box.append(&scrolled);
+                content_box.append(&btn_box);
+
+                let toolbar_view = adw::ToolbarView::new();
+                toolbar_view.add_top_bar(&adw::HeaderBar::new());
+                toolbar_view.set_content(Some(&content_box));
+
+                let dialog = adw::Dialog::builder()
+                    .title(gettext("Insert Markdown Block"))
+                    .content_width(520)
+                    .content_height(360)
+                    .child(&toolbar_view)
+                    .build();
+
+                paste_btn.connect_clicked(clone!(
+                    #[weak]
+                    appwindow,
+                    #[weak]
+                    text_view,
+                    move |_| {
+                        glib::spawn_future_local(clone!(
+                            #[weak]
+                            appwindow,
+                            #[weak]
+                            text_view,
+                            async move {
+                                if let Ok(Some(txt)) = appwindow.clipboard().read_text_future().await {
+                                    text_view.buffer().set_text(&txt);
+                                }
+                            }
+                        ));
+                    }
+                ));
+
+                cancel_btn.connect_clicked(clone!(
+                    #[weak]
+                    dialog,
+                    move |_| {
+                        dialog.close();
+                    }
+                ));
+
+                insert_btn.connect_clicked(clone!(
+                    #[weak]
+                    appwindow,
+                    #[weak]
+                    text_view,
+                    #[weak]
+                    dialog,
+                    move |_| {
+                        let buf = text_view.buffer();
+                        let md = buf.text(&buf.start_iter(), &buf.end_iter(), false).to_string();
+                        if !md.trim().is_empty() {
+                            if let Some(canvas) = appwindow.active_tab_canvas() {
+                                if let Err(e) = canvas.load_in_markdown(md, None) {
+                                    error!("Failed to insert Markdown block, Err: {e:?}");
+                                } else {
+                                    appwindow.overlays().dispatch_toast_text(
+                                        &gettext("Markdown block pasted"),
+                                        Some(std::time::Duration::from_secs(2)),
+                                    );
+                                }
+                            }
+                        }
+                        dialog.close();
+                    }
+                ));
+
+                // Pre-fill from clipboard if Markdown is currently copied
+                glib::spawn_future_local(clone!(
+                    #[weak]
+                    appwindow,
+                    #[weak]
+                    text_view,
+                    async move {
+                        if let Ok(Some(txt)) = appwindow.clipboard().read_text_future().await {
+                            if rnote_engine::strokes::markdown::looks_like_markdown(&txt) {
+                                text_view.buffer().set_text(&txt);
+                            }
+                        }
+                    }
+                ));
+
+                dialog.present(Some(&appwindow));
+                text_view.grab_focus();
+            }
+        ));
+
         // Send to Resolution Notebook
         action_send_to_notebook.connect_activate(clone!(
             #[weak(rename_to = appwindow)]
@@ -1474,6 +1639,8 @@ impl RnAppWindow {
             app.set_accels_for_action("win.search", &["<Meta>f", "<Primary>f", "<Ctrl>f"]);
             app.set_accels_for_action("win.clipboard-copy", &["<Meta>c", "<Primary>c", "<Ctrl>c"]);
             app.set_accels_for_action("win.copy-text", &["<Meta><Shift>c", "<Primary><Shift>c", "<Ctrl><Shift>c", "<Meta><Alt>c"]);
+            app.set_accels_for_action("win.copy-markdown", &["<Meta><Alt><Shift>c", "<Primary><Alt><Shift>c"]);
+            app.set_accels_for_action("win.insert-markdown", &["<Meta><Shift>m", "<Primary><Shift>m", "<Ctrl><Shift>m"]);
             app.set_accels_for_action("win.send-to-notebook", &["<Meta>e", "<Primary>e", "<Ctrl>e"]);
             app.set_accels_for_action("win.clipboard-cut", &["<Meta>x", "<Primary>x", "<Ctrl>x"]);
             app.set_accels_for_action("win.clipboard-paste", &["<Meta>v", "<Primary>v", "<Ctrl>v"]);
@@ -1539,6 +1706,8 @@ impl RnAppWindow {
             app.set_accels_for_action("win.search", &["<Primary>f", "<Ctrl>f"]);
             app.set_accels_for_action("win.clipboard-copy", &["<Primary>c", "<Ctrl>c"]);
             app.set_accels_for_action("win.copy-text", &["<Primary><Shift>c", "<Ctrl><Shift>c", "<Primary><Alt>c"]);
+            app.set_accels_for_action("win.copy-markdown", &["<Primary><Alt><Shift>c", "<Ctrl><Alt><Shift>c"]);
+            app.set_accels_for_action("win.insert-markdown", &["<Primary><Shift>m", "<Ctrl><Shift>m"]);
             app.set_accels_for_action("win.send-to-notebook", &["<Primary>e", "<Ctrl>e"]);
             app.set_accels_for_action("win.clipboard-cut", &["<Primary>x", "<Ctrl>x"]);
             app.set_accels_for_action("win.clipboard-paste", &["<Primary>v", "<Ctrl>v"]);
@@ -1848,8 +2017,14 @@ impl RnAppWindow {
 
                     match appwindow.clipboard().read_text_future().await {
                         Ok(Some(text)) => {
+                            let is_md = rnote_engine::strokes::markdown::looks_like_markdown(&text);
                             if let Err(e) = canvas.load_in_text(text.to_string(), target_pos) {
                                 error!("Failed to paste clipboard text, Err: {e:?}");
+                            } else if is_md {
+                                appwindow.overlays().dispatch_toast_text(
+                                    &gettext("Markdown block pasted"),
+                                    Some(std::time::Duration::from_secs(2)),
+                                );
                             }
                         }
                         Ok(None) => {}

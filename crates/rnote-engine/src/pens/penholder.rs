@@ -254,6 +254,33 @@ impl PenHolder {
         widget_flags
     }
 
+    /// Parse and insert a Markdown block using the Typewriter pen.
+    pub fn insert_markdown(
+        &mut self,
+        markdown: String,
+        preferred_pos: Option<Vector2>,
+        engine_view: &mut EngineViewMut,
+    ) -> WidgetFlags {
+        let mut widget_flags = WidgetFlags::default();
+
+        if let Pen::Typewriter(t) = &mut self.current_pen {
+            widget_flags |= t.insert_markdown(markdown, preferred_pos, engine_view);
+        }
+
+        widget_flags.enable_text_input = Some(self.is_handling_text_input());
+
+        widget_flags
+    }
+
+    /// Returns the stroke key currently being edited if Typewriter is active.
+    pub fn active_typewriter_stroke_key(&self) -> Option<crate::store::StrokeKey> {
+        if let Pen::Typewriter(t) = &self.current_pen {
+            t.active_stroke_key()
+        } else {
+            None
+        }
+    }
+
     /// Handle a pressed shortcut key.
     pub fn handle_pressed_shortcut_key(
         &mut self,
