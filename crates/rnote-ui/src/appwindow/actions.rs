@@ -187,6 +187,8 @@ impl RnAppWindow {
         let action_drawing_pad_pressed_button_3 =
             gio::SimpleAction::new("drawing-pad-pressed-button-3", None);
         self.add_action(&action_drawing_pad_pressed_button_3);
+        let action_pen_mouse_split = gio::SimpleAction::new("pen-mouse-split", None);
+        self.add_action(&action_pen_mouse_split);
 
         // Property Actions
         let action_righthanded = gio::PropertyAction::new("righthanded", self, "righthanded");
@@ -1286,11 +1288,7 @@ impl RnAppWindow {
                     }
                 };
 
-                let gdk_content_provider = gdk::ContentProvider::new_union(content.into_iter().map(|(data, mime_type)| {
-                    gdk::ContentProvider::for_bytes(mime_type.as_str(), &glib::Bytes::from_owned(data))
-                }).collect::<Vec<gdk::ContentProvider>>().as_slice());
-
-                if let Err(e) = appwindow.clipboard().set_content(Some(&gdk_content_provider)) {
+                if let Err(e) = appwindow.set_clipboard_from_engine_content(content) {
                     error!("Set appwindow clipboard content failed in clipboard-copy action, Err: {e:?}");
                 }
 
@@ -1313,7 +1311,7 @@ impl RnAppWindow {
 
                 if let Some(text) = text_opt {
                     if !text.trim().is_empty() {
-                        appwindow.clipboard().set_text(&text);
+                        appwindow.set_clipboard_text_eager(&text);
                         let preview: String = text.chars().take(35).collect();
                         let msg = format!("{}: \"{preview}...\"", gettext("Text copied"));
                         appwindow.overlays().dispatch_toast_text(&msg, Some(std::time::Duration::from_secs(2)));
@@ -1327,7 +1325,7 @@ impl RnAppWindow {
                     if let Some((png_bytes, _)) = content.iter().find(|(_, mime)| mime == "image/png") {
                         if let Some(ocr_text) = crate::appwindow::macos_vision_recognize_text(png_bytes) {
                             if !ocr_text.trim().is_empty() {
-                                appwindow.clipboard().set_text(&ocr_text);
+                                appwindow.set_clipboard_text_eager(&ocr_text);
                                 let preview: String = ocr_text.chars().take(35).collect();
                                 let msg = format!("{}: \"{preview}...\"", gettext("Text recognized (OCR)"));
                                 appwindow.overlays().dispatch_toast_text(&msg, Some(std::time::Duration::from_secs(3)));
@@ -1351,7 +1349,7 @@ impl RnAppWindow {
                 };
                 if let Some(md) = canvas.engine_ref().extract_markdown(None) {
                     if !md.trim().is_empty() {
-                        appwindow.clipboard().set_text(&md);
+                        appwindow.set_clipboard_text_eager(&md);
                         appwindow.overlays().dispatch_toast_text(
                             &gettext("Copied as Markdown"),
                             Some(std::time::Duration::from_secs(2)),
@@ -1511,6 +1509,26 @@ impl RnAppWindow {
             }
         ));
 
+        // Pen vs Trackpad/Mouse hybrid input mode
+        action_pen_mouse_split.connect_activate(clone!(
+            #[weak(rename_to=appwindow)]
+            self,
+            move |_, _| {
+                let Some(canvas) = appwindow.active_tab_canvas() else {
+                    return;
+                };
+                let enabled = canvas.toggle_pen_mouse_split();
+                let msg = if enabled {
+                    gettext("Hybrid Input: Pen draws, Trackpad/Mouse selects")
+                } else {
+                    gettext("Hybrid Input disabled: Trackpad/Mouse uses active tool")
+                };
+                appwindow
+                    .overlays()
+                    .dispatch_toast_text(&msg, Some(std::time::Duration::from_secs(2)));
+            }
+        ));
+
         // Clipboard cut
         action_clipboard_cut.connect_activate(clone!(#[weak(rename_to=appwindow)] self, move |_, _| {
             glib::spawn_future_local(clone!(#[weak] appwindow, async move {
@@ -1530,11 +1548,7 @@ impl RnAppWindow {
                         return;
                     }
                 };
-                let gdk_content_provider = gdk::ContentProvider::new_union(content.into_iter().map(|(data, mime_type)| {
-                    gdk::ContentProvider::for_bytes(mime_type.as_str(), &glib::Bytes::from_owned(data))
-                }).collect::<Vec<gdk::ContentProvider>>().as_slice());
-
-                if let Err(e) = appwindow.clipboard().set_content(Some(&gdk_content_provider)) {
+                if let Err(e) = appwindow.set_clipboard_from_engine_content(content) {
                     error!("Set appwindow clipboard content failed in clipboard-cut action, Err: {e:?}");
                 }
 
@@ -1656,6 +1670,7 @@ impl RnAppWindow {
             app.set_accels_for_action("win.pen-style::eraser", &["<Meta>4", "<Primary>4", "<Ctrl>4", "<Ctrl>KP_4"]);
             app.set_accels_for_action("win.pen-style::selector", &["<Meta>5", "<Primary>5", "<Ctrl>5", "<Ctrl>KP_5"]);
             app.set_accels_for_action("win.pen-style::tools", &["<Meta>6", "<Primary>6", "<Ctrl>6", "<Ctrl>KP_6"]);
+            app.set_accels_for_action("win.pen-mouse-split", &["<Meta><Alt>s", "<Primary><Alt>s"]);
             (1..=9).for_each(|i| {
                 app.set_accels_for_action(
                     &format!("win.set-color-{i}"),
@@ -1723,6 +1738,7 @@ impl RnAppWindow {
             app.set_accels_for_action("win.pen-style::eraser", &["<Primary>4", "<Ctrl>4", "<Ctrl>KP_4"]);
             app.set_accels_for_action("win.pen-style::selector", &["<Primary>5", "<Ctrl>5", "<Ctrl>KP_5"]);
             app.set_accels_for_action("win.pen-style::tools", &["<Primary>6", "<Ctrl>6", "<Ctrl>KP_6"]);
+            app.set_accels_for_action("win.pen-mouse-split", &["<Primary><Alt>s", "<Ctrl><Alt>s"]);
             (1..=9).for_each(|i| {
                 app.set_accels_for_action(
                     &format!("win.set-color-{i}"),
@@ -2006,6 +2022,9 @@ impl RnAppWindow {
             ));
         } else if content_formats.contain_mime_type("text/plain")
             || content_formats.contain_mime_type("text/plain;charset=utf-8")
+            || content_formats.contain_mime_type("public.utf8-plain-text")
+            || content_formats.contain_mime_type("UTF8_STRING")
+            || content_formats.contains_type(glib::Type::STRING)
         {
             glib::spawn_future_local(clone!(
                 #[weak]
@@ -2015,27 +2034,36 @@ impl RnAppWindow {
                 async move {
                     debug!("Recognized clipboard content: plain text");
 
-                    match appwindow.clipboard().read_text_future().await {
-                        Ok(Some(text)) => {
-                            let is_md = rnote_engine::strokes::markdown::looks_like_markdown(&text);
-                            if let Err(e) = canvas.load_in_text(text.to_string(), target_pos) {
-                                error!("Failed to paste clipboard text, Err: {e:?}");
-                            } else if is_md {
-                                appwindow.overlays().dispatch_toast_text(
-                                    &gettext("Markdown block pasted"),
-                                    Some(std::time::Duration::from_secs(2)),
-                                );
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            error!(
-                                "Reading clipboard text failed while pasting clipboard as plain text, Err: {e:?}"
+                    let text_opt = match appwindow.clipboard().read_text_future().await {
+                        Ok(Some(text)) => Some(text.to_string()),
+                        Ok(None) | Err(_) => crate::appwindow::macos_pasteboard_get_string(),
+                    };
+
+                    if let Some(text) = text_opt {
+                        let is_md = rnote_engine::strokes::markdown::looks_like_markdown(&text);
+                        if let Err(e) = canvas.load_in_text(text, target_pos) {
+                            error!("Failed to paste clipboard text, Err: {e:?}");
+                        } else if is_md {
+                            appwindow.overlays().dispatch_toast_text(
+                                &gettext("Markdown block pasted"),
+                                Some(std::time::Duration::from_secs(2)),
                             );
                         }
                     }
                 }
             ));
+        } else if let Some(text) = crate::appwindow::macos_pasteboard_get_string()
+            && !text.trim().is_empty()
+        {
+            let is_md = rnote_engine::strokes::markdown::looks_like_markdown(&text);
+            if let Err(e) = canvas.load_in_text(text, target_pos) {
+                error!("Failed to paste macOS pasteboard text, Err: {e:?}");
+            } else if is_md {
+                self.overlays().dispatch_toast_text(
+                    &gettext("Markdown block pasted"),
+                    Some(std::time::Duration::from_secs(2)),
+                );
+            }
         } else {
             debug!(
                 "Failed to paste clipboard, unsupported MIME-type(s): {:?}",

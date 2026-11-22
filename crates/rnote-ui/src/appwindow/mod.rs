@@ -387,26 +387,33 @@ impl RnAppWindow {
         }
 
         if let Some(content) = widget_flags.clipboard_content {
-            let gdk_content_provider = gdk::ContentProvider::new_union(
-                content
-                    .into_iter()
-                    .map(|(data, mime_type)| {
-                        gdk::ContentProvider::for_bytes(
-                            mime_type.as_str(),
-                            &glib::Bytes::from_owned(data),
-                        )
-                    })
-                    .collect::<Vec<gdk::ContentProvider>>()
-                    .as_slice(),
-            );
-            if let Err(e) = self.clipboard().set_content(Some(&gdk_content_provider)) {
+            if let Some((png_bytes, _)) = content
+                .iter()
+                .find(|(_, m)| m == "image/x-rnote-ocr-fallback")
+            {
+                if let Some(ocr_text) = macos_vision_recognize_text(png_bytes)
+                    && !ocr_text.trim().is_empty()
+                {
+                    self.set_clipboard_text_eager(&ocr_text);
+                    let preview: String = ocr_text.chars().take(35).collect();
+                    let msg = format!("{}: \"{preview}...\"", gettext("Text recognized (OCR)"));
+                    self.overlays()
+                        .dispatch_toast_text(&msg, Some(std::time::Duration::from_secs(3)));
+                } else {
+                    self.overlays().dispatch_toast_text(
+                        &gettext("No text found in selection"),
+                        Some(std::time::Duration::from_secs(2)),
+                    );
+                }
+            } else if let Err(e) = self.set_clipboard_from_engine_content(content) {
                 error!("Failed to set clipboard content from widget flags: {e:?}");
             } else {
                 let raw_toast = widget_flags
                     .clipboard_toast
                     .unwrap_or_else(|| String::from("Snippet copied to clipboard! Paste with ⌘V"));
                 let localized = Self::localize_toast(&raw_toast);
-                self.overlays().dispatch_toast_text(&localized, Some(std::time::Duration::from_secs(2)));
+                self.overlays()
+                    .dispatch_toast_text(&localized, Some(std::time::Duration::from_secs(2)));
             }
         } else if let Some(ref raw_toast) = widget_flags.clipboard_toast {
             let localized = Self::localize_toast(raw_toast);
@@ -567,19 +574,7 @@ impl RnAppWindow {
                 }
 
                 // Copy to system clipboard
-                let gdk_content_provider = gdk::ContentProvider::new_union(
-                    content
-                        .iter()
-                        .map(|(data, mime_type)| {
-                            gdk::ContentProvider::for_bytes(
-                                mime_type.as_str(),
-                                &glib::Bytes::from_owned(data.clone()),
-                            )
-                        })
-                        .collect::<Vec<gdk::ContentProvider>>()
-                        .as_slice(),
-                );
-                if let Err(e) = appwindow.clipboard().set_content(Some(&gdk_content_provider)) {
+                if let Err(e) = appwindow.set_clipboard_from_engine_content(content.clone()) {
                     error!("Setting clipboard in send-to-notebook failed: {e:?}");
                 }
                 appwindow.handle_widget_flags(widget_flags, &canvas);
@@ -1399,6 +1394,208 @@ fn update_macos_document_state(
             msg_set_filename(nswindow, sel_set_filename, empty_ns_str);
         }
     }
+}
+
+impl RnAppWindow {
+    /// Sets clipboard text via GTK and mirrors eagerly into native macOS NSPasteboard
+    /// so external browsers/apps (e.g. Firefox, Safari) immediately see `public.utf8-plain-text`.
+    pub(crate) fn set_clipboard_text_eager(&self, text: &str) {
+        self.clipboard().set_text(text);
+        macos_pasteboard_set_string(text, true);
+    }
+
+    /// Sets clipboard content produced by engine pens (`StrokeContent`, SVG, PNG, `text/plain`),
+    /// using eager UTF-8 string registration on macOS when plain text is included.
+    pub(crate) fn set_clipboard_from_engine_content(
+        &self,
+        content: Vec<(Vec<u8>, String)>,
+    ) -> Result<(), glib::BoolError> {
+        let plain_text = content
+            .iter()
+            .find(|(_, m)| m == "text/plain" || m == "text/plain;charset=utf-8")
+            .and_then(|(b, _)| std::str::from_utf8(b).ok())
+            .filter(|s| !s.trim().is_empty())
+            .map(ToString::to_string);
+
+        let has_non_text = content
+            .iter()
+            .any(|(_, m)| m != "text/plain" && m != "text/plain;charset=utf-8");
+
+        if !has_non_text {
+            if let Some(ref text) = plain_text {
+                self.set_clipboard_text_eager(text);
+            }
+            return Ok(());
+        }
+
+        let mut providers: Vec<gdk::ContentProvider> = Vec::new();
+        if let Some(ref text) = plain_text {
+            providers.push(gdk::ContentProvider::for_value(&text.to_value()));
+            providers.push(gdk::ContentProvider::for_bytes(
+                "text/plain;charset=utf-8",
+                &glib::Bytes::from(text.as_bytes()),
+            ));
+            providers.push(gdk::ContentProvider::for_bytes(
+                "text/plain",
+                &glib::Bytes::from(text.as_bytes()),
+            ));
+        }
+
+        for (data, mime_type) in content {
+            if mime_type == "text/plain" || mime_type == "text/plain;charset=utf-8" {
+                continue;
+            }
+            providers.push(gdk::ContentProvider::for_bytes(
+                mime_type.as_str(),
+                &glib::Bytes::from_owned(data),
+            ));
+        }
+
+        let union = gdk::ContentProvider::new_union(&providers);
+        self.clipboard().set_content(Some(&union))?;
+        if let Some(ref text) = plain_text {
+            macos_pasteboard_set_string(text, false);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_pasteboard_set_string(text: &str, clear: bool) {
+    use std::ffi::{CString, c_char, c_void};
+    let Ok(c_text) = CString::new(text).or_else(|_| CString::new(text.replace('\0', " "))) else {
+        return;
+    };
+    unsafe {
+        unsafe extern "C" {
+            fn dlopen(filename: *const c_char, flag: i32) -> *mut c_void;
+            fn sel_registerName(name: *const c_char) -> *mut c_void;
+            fn objc_msgSend(receiver: *mut c_void, op: *mut c_void, ...) -> *mut c_void;
+            fn objc_getClass(name: *const c_char) -> *mut c_void;
+        }
+        dlopen(
+            b"/System/Library/Frameworks/AppKit.framework/AppKit\0".as_ptr() as *const _,
+            1,
+        );
+        let pb_cls = objc_getClass(b"NSPasteboard\0".as_ptr() as *const _);
+        let str_cls = objc_getClass(b"NSString\0".as_ptr() as *const _);
+        let arr_cls = objc_getClass(b"NSArray\0".as_ptr() as *const _);
+        if pb_cls.is_null() || str_cls.is_null() || arr_cls.is_null() {
+            return;
+        }
+        let msg_simple: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+        let msg_cstr: unsafe extern "C" fn(*mut c_void, *mut c_void, *const c_char) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+        let msg_set: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void) -> bool =
+            std::mem::transmute(objc_msgSend as *const ());
+        let msg_arr: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+
+        let pb = msg_simple(pb_cls, sel_registerName(b"generalPasteboard\0".as_ptr() as *const _));
+        if pb.is_null() {
+            return;
+        }
+
+        let sel_utf8 = sel_registerName(b"stringWithUTF8String:\0".as_ptr() as *const _);
+        let ns_text = msg_cstr(str_cls, sel_utf8, c_text.as_ptr());
+        let ns_type_utf8 = msg_cstr(
+            str_cls,
+            sel_utf8,
+            b"public.utf8-plain-text\0".as_ptr() as *const _,
+        );
+        let ns_type_legacy = msg_cstr(
+            str_cls,
+            sel_utf8,
+            b"NSStringPboardType\0".as_ptr() as *const _,
+        );
+        if ns_text.is_null() || ns_type_utf8.is_null() || ns_type_legacy.is_null() {
+            return;
+        }
+
+        if clear {
+            msg_simple(pb, sel_registerName(b"clearContents\0".as_ptr() as *const _));
+        } else {
+            let sel_arr_obj = sel_registerName(b"arrayWithObject:\0".as_ptr() as *const _);
+            let types_arr = msg_arr(arr_cls, sel_arr_obj, ns_type_utf8);
+            let sel_add_types = sel_registerName(b"addTypes:owner:\0".as_ptr() as *const _);
+            let _ = msg_set(pb, sel_add_types, types_arr, std::ptr::null_mut());
+        }
+
+        let sel_set_str = sel_registerName(b"setString:forType:\0".as_ptr() as *const _);
+        let _ = msg_set(pb, sel_set_str, ns_text, ns_type_utf8);
+        if clear {
+            let _ = msg_set(pb, sel_set_str, ns_text, ns_type_legacy);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_pasteboard_get_string() -> Option<String> {
+    use std::ffi::{CStr, c_char, c_void};
+    unsafe {
+        unsafe extern "C" {
+            fn dlopen(filename: *const c_char, flag: i32) -> *mut c_void;
+            fn sel_registerName(name: *const c_char) -> *mut c_void;
+            fn objc_msgSend(receiver: *mut c_void, op: *mut c_void, ...) -> *mut c_void;
+            fn objc_getClass(name: *const c_char) -> *mut c_void;
+        }
+        dlopen(
+            b"/System/Library/Frameworks/AppKit.framework/AppKit\0".as_ptr() as *const _,
+            1,
+        );
+        let pb_cls = objc_getClass(b"NSPasteboard\0".as_ptr() as *const _);
+        let str_cls = objc_getClass(b"NSString\0".as_ptr() as *const _);
+        if pb_cls.is_null() || str_cls.is_null() {
+            return None;
+        }
+        let msg_simple: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+        let msg_cstr: unsafe extern "C" fn(*mut c_void, *mut c_void, *const c_char) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+        let msg_obj: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+        let msg_utf8_ptr: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *const c_char =
+            std::mem::transmute(objc_msgSend as *const ());
+
+        let pb = msg_simple(pb_cls, sel_registerName(b"generalPasteboard\0".as_ptr() as *const _));
+        if pb.is_null() {
+            return None;
+        }
+        let sel_utf8 = sel_registerName(b"stringWithUTF8String:\0".as_ptr() as *const _);
+        let sel_for_type = sel_registerName(b"stringForType:\0".as_ptr() as *const _);
+        let sel_cstr = sel_registerName(b"UTF8String\0".as_ptr() as *const _);
+
+        for ptype in [
+            b"public.utf8-plain-text\0".as_slice(),
+            b"NSStringPboardType\0".as_slice(),
+        ] {
+            let ns_type = msg_cstr(str_cls, sel_utf8, ptype.as_ptr() as *const _);
+            if ns_type.is_null() {
+                continue;
+            }
+            let ns_str = msg_obj(pb, sel_for_type, ns_type);
+            if ns_str.is_null() {
+                continue;
+            }
+            let c_ptr = msg_utf8_ptr(ns_str, sel_cstr);
+            if !c_ptr.is_null()
+                && let Ok(s) = CStr::from_ptr(c_ptr).to_str()
+                && !s.is_empty()
+            {
+                return Some(s.to_string());
+            }
+        }
+        None
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn macos_pasteboard_set_string(_text: &str, _clear: bool) {}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn macos_pasteboard_get_string() -> Option<String> {
+    None
 }
 
 #[cfg(target_os = "macos")]

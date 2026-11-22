@@ -159,6 +159,10 @@ impl RnApp {
         tools_menu.append(Some("Eraser"), Some("win.pen-style::eraser"));
         tools_menu.append(Some("Selector"), Some("win.pen-style::selector"));
         tools_menu.append(Some("Tools"), Some("win.pen-style::tools"));
+        tools_menu.append(
+            Some("Pen Draws / Trackpad Selects"),
+            Some("win.pen-mouse-split"),
+        );
         menubar.append_submenu(Some("Tools"), &tools_menu);
 
         // Window Menu (macOS native special submenu)

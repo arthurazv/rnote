@@ -1097,6 +1097,10 @@ impl Engine {
             .handle_animation_frame(&mut engine_view_mut!(self));
     }
 
+    pub fn current_pen_style(&self) -> PenStyle {
+        self.penholder.current_pen_style(&engine_view!(self))
+    }
+
     pub fn current_pen_style_w_override(&self) -> PenStyle {
         self.penholder
             .current_pen_style_w_override(&engine_view!(self))

@@ -94,6 +94,11 @@ mod imp {
 
         pub(crate) last_export_dir: RefCell<Option<gio::File>>,
 
+        pub(crate) stylus_detected: Cell<bool>,
+        pub(crate) pen_mouse_split: Cell<bool>,
+        pub(crate) pen_mouse_split_forced: Cell<bool>,
+        pub(crate) mouse_selector_override: Cell<bool>,
+
         pub(crate) search_matches: RefCell<Vec<rnote_engine::textsearch::SearchMatch>>,
         pub(crate) search_active_idx: Cell<Option<usize>>,
     }
@@ -199,6 +204,11 @@ mod imp {
                 text_input_enabled: Cell::new(false),
 
                 last_export_dir: RefCell::new(None),
+
+                stylus_detected: Cell::new(false),
+                pen_mouse_split: Cell::new(true),
+                pen_mouse_split_forced: Cell::new(false),
+                mouse_selector_override: Cell::new(false),
 
                 search_matches: RefCell::new(Vec::new()),
                 search_active_idx: Cell::new(None),
@@ -892,6 +902,20 @@ impl RnCanvas {
     #[allow(unused)]
     pub(crate) fn show_drawing_cursor(&self) -> bool {
         self.property::<bool>("show-drawing-cursor")
+    }
+
+    /// Toggles hybrid Stylus vs Trackpad/Mouse tool separation (Stylus draws, Trackpad/Mouse selects).
+    pub(crate) fn toggle_pen_mouse_split(&self) -> bool {
+        let imp = self.imp();
+        let next = !(imp.pen_mouse_split.get()
+            && (imp.stylus_detected.get() || imp.pen_mouse_split_forced.get()));
+        imp.pen_mouse_split.set(next);
+        imp.pen_mouse_split_forced.set(next);
+        if !next && imp.mouse_selector_override.replace(false) {
+            let wf = self.engine_mut().change_pen_style_override(None);
+            self.emit_handle_widget_flags(wf);
+        }
+        next
     }
 
     #[allow(unused)]

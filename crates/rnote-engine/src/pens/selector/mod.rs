@@ -205,7 +205,13 @@ impl PenBehaviour for Selector {
         }
 
         let (stroke_content, extracted_text) = match &self.state {
-            SelectorState::TextSelected { text, .. } => (None, Some(text.clone())),
+            SelectorState::TextSelected { text, .. } => {
+                if text.trim().is_empty() {
+                    (None, None)
+                } else {
+                    (None, Some(text.clone()))
+                }
+            }
             SelectorState::ModifySelection {
                 selection,
                 selection_bounds,
