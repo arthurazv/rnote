@@ -160,7 +160,7 @@ impl RnApp {
         tools_menu.append(Some("Selector"), Some("win.pen-style::selector"));
         tools_menu.append(Some("Tools"), Some("win.pen-style::tools"));
         tools_menu.append(
-            Some("Pen Draws / Trackpad Selects"),
+            Some("Separate Pen & Trackpad Tools"),
             Some("win.pen-mouse-split"),
         );
         menubar.append_submenu(Some("Tools"), &tools_menu);

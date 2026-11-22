@@ -35,6 +35,9 @@ pub(crate) fn handle_pointer_controller_event(
     let _gdk_device = event.device().unwrap();
     let backlog_policy = canvas.engine_ref().penholder.backlog_policy();
     let is_stylus = event_is_stylus(event);
+    let any_mouse_button_mask = gdk::ModifierType::BUTTON1_MASK
+        | gdk::ModifierType::BUTTON2_MASK
+        | gdk::ModifierType::BUTTON3_MASK;
 
     //std::thread::sleep(std::time::Duration::from_millis(100));
     //super::input::debug_gdk_event(event);
@@ -59,20 +62,19 @@ pub(crate) fn handle_pointer_controller_event(
     }
 
     // GTK can deliver mouse/trackpad events while a stylus is hovering or drawing.
-    // Identify hardware source: stylus draws with the user's pen, while trackpad/mouse
-    // can automatically select/pan without accidentally drawing strokes.
+    // Identify hardware source: stylus and trackpad/mouse each remember their own tool,
+    // switching automatically when alternating input devices.
     if is_stylus {
         stylus_active = !matches!(
             gdk_event_type,
             gdk::EventType::ProximityOut | gdk::EventType::ButtonRelease
         );
         canvas.imp().stylus_detected.set(true);
-        if (gdk_event_type == gdk::EventType::ButtonPress
+        if gdk_event_type == gdk::EventType::ButtonPress
             || (gdk_event_type == gdk::EventType::MotionNotify
-                && gdk_modifiers.contains(gdk::ModifierType::BUTTON1_MASK)))
-            && let Some(saved_style) = canvas.imp().mouse_selector_saved_style.take()
+                && gdk_modifiers.contains(gdk::ModifierType::BUTTON1_MASK))
         {
-            widget_flags |= canvas.engine_mut().change_pen_style(saved_style);
+            widget_flags |= route_device_tool(canvas, true);
         }
     } else {
         // Protect active stylus strokes from accidental palm/trackpad brushes,
@@ -81,8 +83,7 @@ pub(crate) fn handle_pointer_controller_event(
             stylus_active = false;
         } else if stylus_active && pen_state == PenState::Down {
             if gdk_event_type == gdk::EventType::MotionNotify
-                && !gdk_modifiers
-                    .contains(gdk::ModifierType::BUTTON1_MASK | gdk::ModifierType::BUTTON2_MASK)
+                && !gdk_modifiers.intersects(any_mouse_button_mask)
             {
                 stylus_active = false;
             } else {
@@ -97,25 +98,11 @@ pub(crate) fn handle_pointer_controller_event(
             stylus_active = false;
         }
 
-        // Hybrid input routing: when explicitly enabled, primary trackpad/mouse clicks
-        // switch drawing tools to Selector until the next stylus stroke.
         if gdk_event_type == gdk::EventType::ButtonPress
-            && canvas.imp().pen_mouse_split.get()
             && let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
             && button_event.button() == gdk::BUTTON_PRIMARY
         {
-            let base_style = canvas.engine_ref().current_pen_style();
-            if matches!(
-                base_style,
-                rnote_engine::pens::PenStyle::Brush
-                    | rnote_engine::pens::PenStyle::Shaper
-                    | rnote_engine::pens::PenStyle::Eraser
-            ) {
-                canvas.imp().mouse_selector_saved_style.set(Some(base_style));
-                widget_flags |= canvas
-                    .engine_mut()
-                    .change_pen_style(rnote_engine::pens::PenStyle::Selector);
-            }
+            widget_flags |= route_device_tool(canvas, false);
         }
     }
 
@@ -140,8 +127,7 @@ pub(crate) fn handle_pointer_controller_event(
                     pen_state = PenState::Proximity;
                 }
             } else if pen_state == PenState::Down
-                && !gdk_modifiers
-                    .contains(gdk::ModifierType::BUTTON1_MASK | gdk::ModifierType::BUTTON2_MASK)
+                && !gdk_modifiers.intersects(any_mouse_button_mask)
             {
                 pen_state = PenState::Up;
             }
@@ -327,6 +313,36 @@ pub(crate) fn handle_pointer_controller_event(
     }
 
     (propagation, pen_state, stylus_active, widget_flags)
+}
+
+/// Synchronizes and switches independent per-device tool memory between Stylus and Trackpad/Mouse.
+fn route_device_tool(canvas: &RnCanvas, device_is_stylus: bool) -> WidgetFlags {
+    let imp = canvas.imp();
+    if !imp.pen_mouse_split.get() {
+        return WidgetFlags::default();
+    }
+    let current_style = canvas.engine_ref().current_pen_style();
+    let (active_tool, other_tool) = if device_is_stylus {
+        (&imp.stylus_tool, &imp.mouse_tool)
+    } else {
+        (&imp.mouse_tool, &imp.stylus_tool)
+    };
+    let mut widget_flags = WidgetFlags::default();
+    if imp.last_input_is_stylus.get() == Some(!device_is_stylus) {
+        if current_style != other_tool.get() {
+            // User manually picked a new tool in the toolbar before using this device
+            active_tool.set(current_style);
+        } else {
+            let target = active_tool.get();
+            if current_style != target {
+                widget_flags |= canvas.engine_mut().change_pen_style(target);
+            }
+        }
+    } else {
+        active_tool.set(current_style);
+    }
+    imp.last_input_is_stylus.set(Some(device_is_stylus));
+    widget_flags
 }
 
 pub(crate) fn handle_key_controller_key_pressed(

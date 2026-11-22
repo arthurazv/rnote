@@ -1524,13 +1524,11 @@ impl RnAppWindow {
                 };
                 let enabled = canvas.toggle_pen_mouse_split();
                 let msg = if enabled {
-                    gettext("Hybrid Input: Pen draws, Trackpad/Mouse selects")
+                    gettext("Separate Tools active: Pen and Trackpad/Mouse remember their own tools")
                 } else {
-                    gettext("Hybrid Input disabled: Trackpad/Mouse uses active tool")
+                    gettext("Separate Tools disabled: Pen and Trackpad/Mouse share the active tool")
                 };
-                appwindow
-                    .overlays()
-                    .dispatch_toast_text(&msg, Some(std::time::Duration::from_secs(2)));
+                appwindow.dispatch_clipboard_toast(&msg, Some(std::time::Duration::from_secs(2)));
             }
         ));
 

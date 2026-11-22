@@ -94,10 +94,12 @@ mod imp {
 
         pub(crate) last_export_dir: RefCell<Option<gio::File>>,
 
+        #[allow(unused)]
         pub(crate) stylus_detected: Cell<bool>,
         pub(crate) pen_mouse_split: Cell<bool>,
-        pub(crate) pen_mouse_split_forced: Cell<bool>,
-        pub(crate) mouse_selector_saved_style: Cell<Option<rnote_engine::pens::PenStyle>>,
+        pub(crate) stylus_tool: Cell<rnote_engine::pens::PenStyle>,
+        pub(crate) mouse_tool: Cell<rnote_engine::pens::PenStyle>,
+        pub(crate) last_input_is_stylus: Cell<Option<bool>>,
 
         pub(crate) search_matches: RefCell<Vec<rnote_engine::textsearch::SearchMatch>>,
         pub(crate) search_active_idx: Cell<Option<usize>>,
@@ -206,9 +208,10 @@ mod imp {
                 last_export_dir: RefCell::new(None),
 
                 stylus_detected: Cell::new(false),
-                pen_mouse_split: Cell::new(false),
-                pen_mouse_split_forced: Cell::new(false),
-                mouse_selector_saved_style: Cell::new(None),
+                pen_mouse_split: Cell::new(true),
+                stylus_tool: Cell::new(rnote_engine::pens::PenStyle::Brush),
+                mouse_tool: Cell::new(rnote_engine::pens::PenStyle::Selector),
+                last_input_is_stylus: Cell::new(None),
 
                 search_matches: RefCell::new(Vec::new()),
                 search_active_idx: Cell::new(None),
@@ -905,17 +908,13 @@ impl RnCanvas {
         self.property::<bool>("show-drawing-cursor")
     }
 
-    /// Toggles hybrid Stylus vs Trackpad/Mouse tool separation (Stylus draws, Trackpad/Mouse selects).
+    /// Toggles independent per-device tool memory (Stylus vs Trackpad/Mouse).
     pub(crate) fn toggle_pen_mouse_split(&self) -> bool {
         let imp = self.imp();
         let next = !imp.pen_mouse_split.get();
         imp.pen_mouse_split.set(next);
-        imp.pen_mouse_split_forced.set(next);
-        if !next
-            && let Some(saved_style) = imp.mouse_selector_saved_style.take()
-        {
-            let wf = self.engine_mut().change_pen_style(saved_style);
-            self.emit_handle_widget_flags(wf);
+        if !next {
+            imp.last_input_is_stylus.set(None);
         }
         next
     }

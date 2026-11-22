@@ -3325,12 +3325,12 @@ msgstr "Fixado como Caderno"
 msgid "Notebook already pinned"
 msgstr "Caderno já está fixado"
 
-msgid "Hybrid Input: Pen draws, Trackpad/Mouse selects"
-msgstr "Entrada Híbrida: Caneta desenha, Trackpad/Mouse seleciona"
+msgid "Separate Tools active: Pen and Trackpad/Mouse remember their own tools"
+msgstr "Ferramentas Separadas ativadas: Caneta e Trackpad/Mouse lembram sua própria ferramenta"
 
-msgid "Hybrid Input disabled: Trackpad/Mouse uses active tool"
-msgstr "Entrada Híbrida desativada: Trackpad/Mouse usa a ferramenta atual"
+msgid "Separate Tools disabled: Pen and Trackpad/Mouse share the active tool"
+msgstr "Ferramentas Separadas desativadas: Caneta e Trackpad/Mouse compartilham a ferramenta atual"
 
-msgid "Pen Draws / Trackpad Selects"
-msgstr "Caneta Desenha / Trackpad Seleciona"
+msgid "Separate Pen & Trackpad Tools"
+msgstr "Ferramentas Separadas: Caneta e Trackpad"
 
