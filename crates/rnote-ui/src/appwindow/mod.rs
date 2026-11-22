@@ -391,19 +391,35 @@ impl RnAppWindow {
                 .iter()
                 .find(|(_, m)| m == "image/x-rnote-ocr-fallback")
             {
-                if let Some(ocr_text) = macos_vision_recognize_text(png_bytes)
-                    && !ocr_text.trim().is_empty()
-                {
-                    self.set_clipboard_text_eager(&ocr_text);
-                    let preview: String = ocr_text.chars().take(35).collect();
-                    let msg = format!("{}: \"{preview}...\"", gettext("Text recognized (OCR)"));
-                    self.overlays()
-                        .dispatch_toast_text(&msg, Some(std::time::Duration::from_secs(3)));
-                } else {
-                    self.overlays().dispatch_toast_text(
-                        &gettext("No text found in selection"),
-                        Some(std::time::Duration::from_secs(2)),
-                    );
+                if !self.imp().ocr_in_progress.replace(true) {
+                    let png_bytes = png_bytes.clone();
+                    let (tx, rx) = futures::channel::oneshot::channel();
+                    std::thread::spawn(move || {
+                        let _ = tx.send(macos_vision_recognize_text(&png_bytes));
+                    });
+                    glib::spawn_future_local(clone!(
+                        #[weak(rename_to = appwindow)]
+                        self,
+                        async move {
+                            let res = rx.await;
+                            appwindow.imp().ocr_in_progress.set(false);
+                            if let Ok(Some(ocr_text)) = res
+                                && !ocr_text.trim().is_empty()
+                            {
+                                appwindow.set_clipboard_text_eager(&ocr_text);
+                                let preview: String = ocr_text.chars().take(35).collect();
+                                let msg =
+                                    format!("{}: \"{preview}...\"", gettext("Text recognized (OCR)"));
+                                appwindow
+                                    .dispatch_clipboard_toast(&msg, Some(Duration::from_secs(3)));
+                            } else {
+                                appwindow.dispatch_clipboard_toast(
+                                    &gettext("No text found in selection"),
+                                    Some(Duration::from_secs(2)),
+                                );
+                            }
+                        }
+                    ));
                 }
             } else if let Err(e) = self.set_clipboard_from_engine_content(content) {
                 error!("Failed to set clipboard content from widget flags: {e:?}");
@@ -412,12 +428,11 @@ impl RnAppWindow {
                     .clipboard_toast
                     .unwrap_or_else(|| String::from("Snippet copied to clipboard! Paste with ⌘V"));
                 let localized = Self::localize_toast(&raw_toast);
-                self.overlays()
-                    .dispatch_toast_text(&localized, Some(std::time::Duration::from_secs(2)));
+                self.dispatch_clipboard_toast(&localized, Some(std::time::Duration::from_secs(2)));
             }
         } else if let Some(ref raw_toast) = widget_flags.clipboard_toast {
             let localized = Self::localize_toast(raw_toast);
-            self.overlays().dispatch_toast_text(&localized, Some(std::time::Duration::from_secs(2)));
+            self.dispatch_clipboard_toast(&localized, Some(std::time::Duration::from_secs(2)));
         }
 
         // Keep the pages navigator in sync with the active canvas.
@@ -1397,15 +1412,33 @@ fn update_macos_document_state(
 }
 
 impl RnAppWindow {
-    /// Sets clipboard text via GTK and mirrors eagerly into native macOS NSPasteboard
-    /// so external browsers/apps (e.g. Firefox, Safari) immediately see `public.utf8-plain-text`.
+    pub(crate) fn dispatch_clipboard_toast(&self, text: &str, timeout: Option<Duration>) {
+        self.overlays().dispatch_toast_text_singleton(
+            text,
+            timeout,
+            &mut *self.imp().clipboard_toast_singleton.borrow_mut(),
+        );
+    }
+
+    /// Sets clipboard text via GTK's native content providers (`text/plain;charset=utf-8` maps to
+    /// `public.utf8-plain-text` on macOS) without bypassing `GdkMacosClipboard`.
     pub(crate) fn set_clipboard_text_eager(&self, text: &str) {
-        self.clipboard().set_text(text);
-        macos_pasteboard_set_string(text, true);
+        let providers = [
+            gdk::ContentProvider::for_value(&text.to_value()),
+            gdk::ContentProvider::for_bytes(
+                "text/plain;charset=utf-8",
+                &glib::Bytes::from(text.as_bytes()),
+            ),
+            gdk::ContentProvider::for_bytes("text/plain", &glib::Bytes::from(text.as_bytes())),
+        ];
+        let union = gdk::ContentProvider::new_union(&providers);
+        if let Err(e) = self.clipboard().set_content(Some(&union)) {
+            error!("Failed to set clipboard text content: {e:?}");
+        }
     }
 
     /// Sets clipboard content produced by engine pens (`StrokeContent`, SVG, PNG, `text/plain`),
-    /// using eager UTF-8 string registration on macOS when plain text is included.
+    /// always including `text/plain;charset=utf-8` when plain text is present.
     pub(crate) fn set_clipboard_from_engine_content(
         &self,
         content: Vec<(Vec<u8>, String)>,
@@ -1453,80 +1486,7 @@ impl RnAppWindow {
 
         let union = gdk::ContentProvider::new_union(&providers);
         self.clipboard().set_content(Some(&union))?;
-        if let Some(ref text) = plain_text {
-            macos_pasteboard_set_string(text, false);
-        }
         Ok(())
-    }
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn macos_pasteboard_set_string(text: &str, clear: bool) {
-    use std::ffi::{CString, c_char, c_void};
-    let Ok(c_text) = CString::new(text).or_else(|_| CString::new(text.replace('\0', " "))) else {
-        return;
-    };
-    unsafe {
-        unsafe extern "C" {
-            fn dlopen(filename: *const c_char, flag: i32) -> *mut c_void;
-            fn sel_registerName(name: *const c_char) -> *mut c_void;
-            fn objc_msgSend(receiver: *mut c_void, op: *mut c_void, ...) -> *mut c_void;
-            fn objc_getClass(name: *const c_char) -> *mut c_void;
-        }
-        dlopen(
-            b"/System/Library/Frameworks/AppKit.framework/AppKit\0".as_ptr() as *const _,
-            1,
-        );
-        let pb_cls = objc_getClass(b"NSPasteboard\0".as_ptr() as *const _);
-        let str_cls = objc_getClass(b"NSString\0".as_ptr() as *const _);
-        let arr_cls = objc_getClass(b"NSArray\0".as_ptr() as *const _);
-        if pb_cls.is_null() || str_cls.is_null() || arr_cls.is_null() {
-            return;
-        }
-        let msg_simple: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
-            std::mem::transmute(objc_msgSend as *const ());
-        let msg_cstr: unsafe extern "C" fn(*mut c_void, *mut c_void, *const c_char) -> *mut c_void =
-            std::mem::transmute(objc_msgSend as *const ());
-        let msg_set: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void) -> bool =
-            std::mem::transmute(objc_msgSend as *const ());
-        let msg_arr: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
-            std::mem::transmute(objc_msgSend as *const ());
-
-        let pb = msg_simple(pb_cls, sel_registerName(b"generalPasteboard\0".as_ptr() as *const _));
-        if pb.is_null() {
-            return;
-        }
-
-        let sel_utf8 = sel_registerName(b"stringWithUTF8String:\0".as_ptr() as *const _);
-        let ns_text = msg_cstr(str_cls, sel_utf8, c_text.as_ptr());
-        let ns_type_utf8 = msg_cstr(
-            str_cls,
-            sel_utf8,
-            b"public.utf8-plain-text\0".as_ptr() as *const _,
-        );
-        let ns_type_legacy = msg_cstr(
-            str_cls,
-            sel_utf8,
-            b"NSStringPboardType\0".as_ptr() as *const _,
-        );
-        if ns_text.is_null() || ns_type_utf8.is_null() || ns_type_legacy.is_null() {
-            return;
-        }
-
-        if clear {
-            msg_simple(pb, sel_registerName(b"clearContents\0".as_ptr() as *const _));
-        } else {
-            let sel_arr_obj = sel_registerName(b"arrayWithObject:\0".as_ptr() as *const _);
-            let types_arr = msg_arr(arr_cls, sel_arr_obj, ns_type_utf8);
-            let sel_add_types = sel_registerName(b"addTypes:owner:\0".as_ptr() as *const _);
-            let _ = msg_set(pb, sel_add_types, types_arr, std::ptr::null_mut());
-        }
-
-        let sel_set_str = sel_registerName(b"setString:forType:\0".as_ptr() as *const _);
-        let _ = msg_set(pb, sel_set_str, ns_text, ns_type_utf8);
-        if clear {
-            let _ = msg_set(pb, sel_set_str, ns_text, ns_type_legacy);
-        }
     }
 }
 
@@ -1589,9 +1549,6 @@ pub(crate) fn macos_pasteboard_get_string() -> Option<String> {
         None
     }
 }
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn macos_pasteboard_set_string(_text: &str, _clear: bool) {}
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn macos_pasteboard_get_string() -> Option<String> {

@@ -1314,7 +1314,7 @@ impl RnAppWindow {
                         appwindow.set_clipboard_text_eager(&text);
                         let preview: String = text.chars().take(35).collect();
                         let msg = format!("{}: \"{preview}...\"", gettext("Text copied"));
-                        appwindow.overlays().dispatch_toast_text(&msg, Some(std::time::Duration::from_secs(2)));
+                        appwindow.dispatch_clipboard_toast(&msg, Some(std::time::Duration::from_secs(2)));
                         return;
                     }
                 }
@@ -1323,19 +1323,24 @@ impl RnAppWindow {
                 let receiver = canvas.engine_ref().fetch_clipboard_content();
                 if let Ok(Ok((content, _))) = receiver.await {
                     if let Some((png_bytes, _)) = content.iter().find(|(_, mime)| mime == "image/png") {
-                        if let Some(ocr_text) = crate::appwindow::macos_vision_recognize_text(png_bytes) {
+                        let png_bytes = png_bytes.clone();
+                        let (tx, rx) = futures::channel::oneshot::channel();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(crate::appwindow::macos_vision_recognize_text(&png_bytes));
+                        });
+                        if let Ok(Some(ocr_text)) = rx.await {
                             if !ocr_text.trim().is_empty() {
                                 appwindow.set_clipboard_text_eager(&ocr_text);
                                 let preview: String = ocr_text.chars().take(35).collect();
                                 let msg = format!("{}: \"{preview}...\"", gettext("Text recognized (OCR)"));
-                                appwindow.overlays().dispatch_toast_text(&msg, Some(std::time::Duration::from_secs(3)));
+                                appwindow.dispatch_clipboard_toast(&msg, Some(std::time::Duration::from_secs(3)));
                                 return;
                             }
                         }
                     }
                 }
 
-                appwindow.overlays().dispatch_toast_text(&gettext("No text found in selection"), Some(std::time::Duration::from_secs(2)));
+                appwindow.dispatch_clipboard_toast(&gettext("No text found in selection"), Some(std::time::Duration::from_secs(2)));
             }));
         }));
 
@@ -1350,14 +1355,14 @@ impl RnAppWindow {
                 if let Some(md) = canvas.engine_ref().extract_markdown(None) {
                     if !md.trim().is_empty() {
                         appwindow.set_clipboard_text_eager(&md);
-                        appwindow.overlays().dispatch_toast_text(
+                        appwindow.dispatch_clipboard_toast(
                             &gettext("Copied as Markdown"),
                             Some(std::time::Duration::from_secs(2)),
                         );
                         return;
                     }
                 }
-                appwindow.overlays().dispatch_toast_text(
+                appwindow.dispatch_clipboard_toast(
                     &gettext("No text found in selection"),
                     Some(std::time::Duration::from_secs(2)),
                 );

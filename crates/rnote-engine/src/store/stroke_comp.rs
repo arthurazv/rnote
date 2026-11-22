@@ -977,4 +977,37 @@ impl StrokeStore {
 
         Some((clipboard_content, widget_flags))
     }
+
+    /// Generates a lightweight thresholded PNG crop for OCR without exporting SVG/StrokeContent.
+    pub(crate) fn generate_area_ocr_png_bytes(
+        &self,
+        background: crate::document::Background,
+        bounds: Aabb,
+    ) -> Option<Vec<u8>> {
+        let keys = self.stroke_keys_as_rendered_intersecting_bounds(bounds);
+        if keys.is_empty() {
+            return None;
+        }
+        let stroke_content = self
+            .fetch_stroke_content(&keys)
+            .with_background(background)
+            .with_bounds(bounds);
+
+        let max_dim = bounds.extents()[0].max(bounds.extents()[1]).max(1.0);
+        let image_scale = (1600.0 / max_dim).clamp(0.75, 1.5);
+
+        let mut cropped_image = crate::Image::gen_with_cairo(
+            |cairo_cx| {
+                stroke_content.draw_to_cairo(cairo_cx, true, false, false, 0.0, image_scale)
+            },
+            bounds,
+            image_scale,
+        )
+        .ok()?;
+
+        cropped_image.apply_auto_threshold_cleanup(false);
+        cropped_image
+            .into_encoded_bytes(image::ImageFormat::Png, None)
+            .ok()
+    }
 }

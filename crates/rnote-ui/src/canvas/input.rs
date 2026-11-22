@@ -20,12 +20,13 @@ use tracing::trace;
 ///   should be inhibited from propagating
 /// - the new pen state
 /// - whether a stylus input session is active
+/// - accumulated widget flags to apply after `pen_state` has been updated
 pub(crate) fn handle_pointer_controller_event(
     canvas: &RnCanvas,
     event: &gdk::Event,
     mut pen_state: PenState,
     mut stylus_active: bool,
-) -> (glib::Propagation, PenState, bool) {
+) -> (glib::Propagation, PenState, bool, WidgetFlags) {
     let now = Instant::now();
     let mut widget_flags = WidgetFlags::default();
     let touch_drawing = canvas.touch_drawing();
@@ -40,58 +41,80 @@ pub(crate) fn handle_pointer_controller_event(
 
     if !is_stylus && stylus_active && event_is_touch_or_hand(event) {
         // Palm/touch rejection: never let a hand/finger touch draw or steal focus while stylus is active
-        return (glib::Propagation::Proceed, pen_state, stylus_active);
+        return (
+            glib::Propagation::Proceed,
+            pen_state,
+            stylus_active,
+            widget_flags,
+        );
     }
 
     if !is_stylus && reject_pointer_input(event, touch_drawing) {
-        return (glib::Propagation::Proceed, pen_state, stylus_active);
+        return (
+            glib::Propagation::Proceed,
+            pen_state,
+            stylus_active,
+            widget_flags,
+        );
     }
 
     // GTK can deliver mouse/trackpad events while a stylus is hovering or drawing.
     // Identify hardware source: stylus draws with the user's pen, while trackpad/mouse
     // can automatically select/pan without accidentally drawing strokes.
     if is_stylus {
-        stylus_active = gdk_event_type != gdk::EventType::ProximityOut;
+        stylus_active = !matches!(
+            gdk_event_type,
+            gdk::EventType::ProximityOut | gdk::EventType::ButtonRelease
+        );
         canvas.imp().stylus_detected.set(true);
-        if canvas.imp().mouse_selector_override.replace(false) {
-            widget_flags |= canvas.engine_mut().change_pen_style_override(None);
+        if (gdk_event_type == gdk::EventType::ButtonPress
+            || (gdk_event_type == gdk::EventType::MotionNotify
+                && gdk_modifiers.contains(gdk::ModifierType::BUTTON1_MASK)))
+            && let Some(saved_style) = canvas.imp().mouse_selector_saved_style.take()
+        {
+            widget_flags |= canvas.engine_mut().change_pen_style(saved_style);
         }
     } else {
-        // Protect active stylus strokes from accidental palm/trackpad brushes
-        if stylus_active && pen_state == PenState::Down {
-            return (glib::Propagation::Proceed, pen_state, stylus_active);
-        }
-        if stylus_active {
-            // A deliberate physical mouse/trackpad click hands control back.
-            match gdk_event_type {
-                gdk::EventType::ButtonPress | gdk::EventType::ButtonRelease => {
-                    stylus_active = false;
-                }
-                _ => return (glib::Propagation::Proceed, pen_state, stylus_active),
+        // Protect active stylus strokes from accidental palm/trackpad brushes,
+        // while never swallowing ButtonRelease or motion once buttons are released.
+        if gdk_event_type == gdk::EventType::ButtonRelease {
+            stylus_active = false;
+        } else if stylus_active && pen_state == PenState::Down {
+            if gdk_event_type == gdk::EventType::MotionNotify
+                && !gdk_modifiers
+                    .contains(gdk::ModifierType::BUTTON1_MASK | gdk::ModifierType::BUTTON2_MASK)
+            {
+                stylus_active = false;
+            } else {
+                return (
+                    glib::Propagation::Proceed,
+                    pen_state,
+                    stylus_active,
+                    widget_flags,
+                );
             }
+        } else {
+            stylus_active = false;
         }
 
-        // Hybrid input routing: when stylus has been detected (or explicitly toggled on),
-        // primary trackpad/mouse clicks temporarily switch drawing tools to Selector.
+        // Hybrid input routing: when explicitly enabled, primary trackpad/mouse clicks
+        // switch drawing tools to Selector until the next stylus stroke.
         if gdk_event_type == gdk::EventType::ButtonPress
             && canvas.imp().pen_mouse_split.get()
-            && (canvas.imp().stylus_detected.get() || canvas.imp().pen_mouse_split_forced.get())
             && let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
             && button_event.button() == gdk::BUTTON_PRIMARY
         {
             let base_style = canvas.engine_ref().current_pen_style();
-            let active_style = canvas.engine_ref().current_pen_style_w_override();
             if matches!(
                 base_style,
                 rnote_engine::pens::PenStyle::Brush
                     | rnote_engine::pens::PenStyle::Shaper
                     | rnote_engine::pens::PenStyle::Eraser
-            ) && active_style != rnote_engine::pens::PenStyle::Selector
-            {
-                canvas.imp().mouse_selector_override.set(true);
+            ) {
+                canvas.imp().mouse_selector_saved_style.set(Some(base_style));
                 widget_flags |= canvas
                     .engine_mut()
-                    .change_pen_style_override(Some(rnote_engine::pens::PenStyle::Selector));
+                    .change_pen_style(rnote_engine::pens::PenStyle::Selector);
             }
         }
     }
@@ -111,9 +134,16 @@ pub(crate) fn handle_pointer_controller_event(
                 // in case ProximityIn & ProximityOut is not reported.
                 if gdk_modifiers.contains(gdk::ModifierType::BUTTON1_MASK) {
                     pen_state = PenState::Down;
+                } else if pen_state == PenState::Down {
+                    pen_state = PenState::Up;
                 } else {
                     pen_state = PenState::Proximity;
                 }
+            } else if pen_state == PenState::Down
+                && !gdk_modifiers
+                    .contains(gdk::ModifierType::BUTTON1_MASK | gdk::ModifierType::BUTTON2_MASK)
+            {
+                pen_state = PenState::Up;
             }
         }
         gdk::EventType::ButtonPress => {
@@ -130,6 +160,9 @@ pub(crate) fn handle_pointer_controller_event(
                 {
                     handle_pen_event = true;
                     handle_shortcut_key = true;
+                }
+                if gdk_button == gdk::BUTTON_PRIMARY {
+                    pen_state = PenState::Down;
                 }
             } else {
                 #[allow(clippy::collapsible_else_if)]
@@ -220,7 +253,12 @@ pub(crate) fn handle_pointer_controller_event(
 
     if handle_pen_event {
         let Some(elements) = retrieve_pointer_elements(canvas, now, event, backlog_policy) else {
-            return (glib::Propagation::Proceed, pen_state, stylus_active);
+            return (
+                glib::Propagation::Proceed,
+                pen_state,
+                stylus_active,
+                widget_flags,
+            );
         };
         let modifier_keys = retrieve_modifier_keys(event.modifier_state());
         let pen_mode = retrieve_pen_mode(event);
@@ -288,8 +326,7 @@ pub(crate) fn handle_pointer_controller_event(
         }
     }
 
-    canvas.emit_handle_widget_flags(widget_flags);
-    (propagation, pen_state, stylus_active)
+    (propagation, pen_state, stylus_active, widget_flags)
 }
 
 pub(crate) fn handle_key_controller_key_pressed(
@@ -393,7 +430,15 @@ pub(crate) fn reject_pointer_input(event: &gdk::Event, touch_drawing: bool) -> b
 }
 
 #[cfg(target_os = "macos")]
-fn macos_current_nsevent_stylus_info() -> Option<(f64, Option<PenMode>)> {
+fn macos_current_nsevent_stylus_info(event: &gdk::Event) -> Option<(f64, Option<PenMode>)> {
+    let gdk_event_type = event.event_type();
+    if !matches!(
+        gdk_event_type,
+        gdk::EventType::MotionNotify | gdk::EventType::ButtonPress | gdk::EventType::ButtonRelease
+    ) {
+        return None;
+    }
+
     use std::ffi::{c_char, c_void};
     unsafe {
         unsafe extern "C" {
@@ -418,6 +463,8 @@ fn macos_current_nsevent_stylus_info() -> Option<(f64, Option<PenMode>)> {
             std::mem::transmute(objc_msgSend as *const ());
         let msg_f32: unsafe extern "C" fn(*mut c_void, *mut c_void) -> f32 =
             std::mem::transmute(objc_msgSend as *const ());
+        let msg_f64: unsafe extern "C" fn(*mut c_void, *mut c_void) -> f64 =
+            std::mem::transmute(objc_msgSend as *const ());
 
         let app = msg_ptr(
             ns_app_cls,
@@ -434,73 +481,57 @@ fn macos_current_nsevent_stylus_info() -> Option<(f64, Option<PenMode>)> {
             return None;
         }
 
-        let ev_type = msg_usize(ns_event, sel_registerName(b"type\0".as_ptr() as *const _));
-        let map_pointing_device = |dev_type: usize| -> Option<PenMode> {
-            match dev_type {
-                1 => Some(PenMode::Pen),
-                3 => Some(PenMode::Eraser),
-                _ => None,
+        let gdk_time = event.time();
+        if gdk_time > 0 {
+            let ns_ts = msg_f64(
+                ns_event,
+                sel_registerName(b"timestamp\0".as_ptr() as *const _),
+            );
+            let ns_ts_ms = ((ns_ts * 1000.0) as u64) as u32;
+            let diff = ns_ts_ms.wrapping_sub(gdk_time).min(gdk_time.wrapping_sub(ns_ts_ms));
+            if diff > 15 {
+                return None;
             }
+        }
+
+        let ev_type = msg_usize(ns_event, sel_registerName(b"type\0".as_ptr() as *const _));
+        let subtype = || {
+            msg_i16(
+                ns_event,
+                sel_registerName(b"subtype\0".as_ptr() as *const _),
+            )
+        };
+        let tablet_pressure = || {
+            let pressure = msg_f32(
+                ns_event,
+                sel_registerName(b"pressure\0".as_ptr() as *const _),
+            );
+            Some(((pressure as f64).clamp(0.01, 1.0), None))
         };
 
-        match ev_type {
-            23 => {
-                // NSEventTypeTabletPoint
-                let pressure = msg_f32(
-                    ns_event,
-                    sel_registerName(b"pressure\0".as_ptr() as *const _),
-                );
-                Some(((pressure as f64).clamp(0.01, 1.0), None))
-            }
-            24 => {
-                // NSEventTypeTabletProximity
-                let dev_type = msg_usize(
-                    ns_event,
-                    sel_registerName(b"pointingDeviceType\0".as_ptr() as *const _),
-                );
-                Some((Element::PRESSURE_DEFAULT, map_pointing_device(dev_type)))
-            }
-            1..=7 | 25..=27 => {
-                let subtype = msg_i16(
-                    ns_event,
-                    sel_registerName(b"subtype\0".as_ptr() as *const _),
-                );
-                if subtype == 1 {
-                    // NSEventSubtypeTabletPoint
-                    let pressure = msg_f32(
-                        ns_event,
-                        sel_registerName(b"pressure\0".as_ptr() as *const _),
-                    );
-                    Some(((pressure as f64).clamp(0.01, 1.0), None))
-                } else if subtype == 2 {
-                    // NSEventSubtypeTabletProximity
-                    let dev_type = msg_usize(
-                        ns_event,
-                        sel_registerName(b"pointingDeviceType\0".as_ptr() as *const _),
-                    );
-                    Some((Element::PRESSURE_DEFAULT, map_pointing_device(dev_type)))
-                } else {
-                    None
-                }
-            }
+        match (gdk_event_type, ev_type) {
+            (gdk::EventType::MotionNotify, 23) => tablet_pressure(),
+            (gdk::EventType::MotionNotify, 5..=7 | 27) if subtype() == 1 => tablet_pressure(),
+            (gdk::EventType::ButtonPress, 1 | 3 | 25) if subtype() == 1 => tablet_pressure(),
+            (gdk::EventType::ButtonRelease, 2 | 4 | 26) if subtype() == 1 => tablet_pressure(),
             _ => None,
         }
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn macos_current_nsevent_stylus_info() -> Option<(f64, Option<PenMode>)> {
+fn macos_current_nsevent_stylus_info(_event: &gdk::Event) -> Option<(f64, Option<PenMode>)> {
     None
 }
 
 fn event_is_stylus(event: &gdk::Event) -> bool {
     // Detect stylus via device tool (GTK4 standard), input source (Pen),
-    // or native macOS NSEvent tablet subtype (for gdkmacos core-pointer tablet routing)
+    // or matching native macOS NSEvent tablet subtype (for gdkmacos core-pointer tablet routing)
     event.device_tool().is_some()
         || event
             .device()
             .is_some_and(|d| d.source() == gdk::InputSource::Pen)
-        || macos_current_nsevent_stylus_info().is_some()
+        || macos_current_nsevent_stylus_info(event).is_some()
 }
 
 fn retrieve_pointer_elements(
@@ -591,7 +622,7 @@ fn retrieve_pointer_elements(
 
     let pressure = if has_device_tool {
         event.axis(gdk::AxisUse::Pressure).unwrap_or(Element::PRESSURE_DEFAULT)
-    } else if let Some((mac_p, _)) = macos_current_nsevent_stylus_info() {
+    } else if let Some((mac_p, _)) = macos_current_nsevent_stylus_info(event) {
         mac_p
     } else {
         Element::PRESSURE_DEFAULT
@@ -639,7 +670,7 @@ fn retrieve_pen_mode(event: &gdk::Event) -> Option<PenMode> {
             _ => None,
         };
     }
-    macos_current_nsevent_stylus_info().and_then(|(_, mode)| mode)
+    macos_current_nsevent_stylus_info(event).and_then(|(_, mode)| mode)
 }
 
 pub(crate) fn retrieve_keyboard_shortcut_key(

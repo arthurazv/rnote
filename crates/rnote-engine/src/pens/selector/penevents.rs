@@ -489,65 +489,72 @@ impl Selector {
                 if engine_view.config.pens_config.selector_config.style == SelectorStyle::Text {
                     if let (Some(first), Some(last)) = (path.first(), path.last()) {
                         let aabb = Aabb::new_positive(first.pos, last.pos);
-                        let runs = engine_view.store.extract_text_runs_in_bounds(aabb);
-                        if !runs.is_empty() {
-                            let text = runs.iter().map(|(w, _)| w.as_str()).collect::<Vec<_>>().join(" ");
-                            let raw_boxes: Vec<Aabb> = runs.into_iter().map(|(_, b)| b).collect();
-                            let word_boxes = crate::store::StrokeStore::merge_word_boxes_into_line_spans(raw_boxes);
-                            let preview: String = text.chars().take(35).collect();
+                        if aabb.extents()[0] < 4.0 && aabb.extents()[1] < 4.0 {
+                            self.state = SelectorState::Idle;
+                        } else {
+                            let runs = engine_view.store.extract_text_runs_in_bounds(aabb);
+                            if !runs.is_empty() {
+                                let text = runs
+                                    .iter()
+                                    .map(|(w, _)| w.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(" ");
+                                let raw_boxes: Vec<Aabb> =
+                                    runs.into_iter().map(|(_, b)| b).collect();
+                                let word_boxes =
+                                    crate::store::StrokeStore::merge_word_boxes_into_line_spans(
+                                        raw_boxes,
+                                    );
+                                let preview: String = text.chars().take(35).collect();
 
-                            let mut combined_bounds = aabb;
-                            for b in &word_boxes {
-                                combined_bounds.merge(b);
-                            }
+                                let mut combined_bounds = aabb;
+                                for b in &word_boxes {
+                                    combined_bounds.merge(b);
+                                }
 
-                            self.state = SelectorState::TextSelected {
-                                bounds: combined_bounds,
-                                word_boxes,
-                                text: text.clone(),
-                            };
-                            widget_flags.clipboard_content = Some(vec![
-                                (text.into_bytes(), "text/plain".to_string()),
-                            ]);
-                            widget_flags.clipboard_toast = Some(format!(
-                                "Text copied: \"{preview}...\""
-                            ));
-                            progress = PenProgress::Finished;
-                        } else if cfg!(target_os = "macos")
-                            && aabb.extents()[0] >= 8.0
-                            && aabb.extents()[1] >= 8.0
-                        {
-                            // Automatic OCR fallback when dragging Text Selector over scanned PDFs, images, or handwriting on macOS
-                            let scale = engine_view.camera.scale_factor();
-                            if let Some((clip_items, _)) =
-                                engine_view.store.generate_area_snippet_clipboard(
-                                    engine_view.document.config.background,
-                                    aabb,
-                                    Some(scale),
-                                    true,
-                                )
-                                && let Some((png_bytes, _)) =
-                                    clip_items.into_iter().find(|(_, m)| m == "image/png")
-                            {
                                 self.state = SelectorState::TextSelected {
-                                    bounds: aabb,
-                                    word_boxes: vec![aabb],
-                                    text: String::new(),
+                                    bounds: combined_bounds,
+                                    word_boxes,
+                                    text: text.clone(),
                                 };
-                                widget_flags.clipboard_content = Some(vec![(
-                                    png_bytes,
-                                    String::from("image/x-rnote-ocr-fallback"),
-                                )]);
+                                widget_flags.clipboard_content = Some(vec![
+                                    (text.into_bytes(), "text/plain".to_string()),
+                                ]);
+                                widget_flags.clipboard_toast =
+                                    Some(format!("Text copied: \"{preview}...\""));
+                                progress = PenProgress::Finished;
+                            } else if cfg!(target_os = "macos")
+                                && aabb.extents()[0] >= 12.0
+                                && aabb.extents()[1] >= 12.0
+                            {
+                                // Automatic OCR fallback when dragging Text Selector over scanned PDFs, images, or handwriting on macOS
+                                if let Some(png_bytes) =
+                                    engine_view.store.generate_area_ocr_png_bytes(
+                                        engine_view.document.config.background,
+                                        aabb,
+                                    )
+                                {
+                                    self.state = SelectorState::TextSelected {
+                                        bounds: aabb,
+                                        word_boxes: vec![aabb],
+                                        text: String::new(),
+                                    };
+                                    widget_flags.clipboard_content = Some(vec![(
+                                        png_bytes,
+                                        String::from("image/x-rnote-ocr-fallback"),
+                                    )]);
+                                } else {
+                                    self.state = SelectorState::Idle;
+                                    widget_flags.clipboard_toast =
+                                        Some(String::from("No text found in selection"));
+                                }
+                                progress = PenProgress::Finished;
                             } else {
                                 self.state = SelectorState::Idle;
                                 widget_flags.clipboard_toast =
                                     Some(String::from("No text found in selection"));
+                                progress = PenProgress::Finished;
                             }
-                            progress = PenProgress::Finished;
-                        } else {
-                            self.state = SelectorState::Idle;
-                            widget_flags.clipboard_toast = Some(String::from("No text found in selection"));
-                            progress = PenProgress::Finished;
                         }
                     } else {
                         self.state = SelectorState::Idle;
