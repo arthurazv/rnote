@@ -70,10 +70,13 @@ pub(crate) fn handle_pointer_controller_event(
             gdk::EventType::ProximityOut | gdk::EventType::ButtonRelease
         );
         canvas.imp().stylus_detected.set(true);
-        if gdk_event_type == gdk::EventType::ButtonPress
+        let should_route_stylus = gdk_event_type == gdk::EventType::ButtonPress
             || (gdk_event_type == gdk::EventType::MotionNotify
-                && gdk_modifiers.contains(gdk::ModifierType::BUTTON1_MASK))
-        {
+                && (gdk_modifiers.contains(gdk::ModifierType::BUTTON1_MASK)
+                    || canvas.imp().last_input_is_stylus.get().is_none()
+                    || (canvas.imp().last_input_is_stylus.get() == Some(false)
+                        && canvas.engine_ref().nothing_selected())));
+        if should_route_stylus {
             widget_flags |= route_device_tool(canvas, true);
         }
     } else {
@@ -331,10 +334,17 @@ fn route_device_tool(canvas: &RnCanvas, device_is_stylus: bool) -> WidgetFlags {
     if imp.last_input_is_stylus.get() == Some(!device_is_stylus) {
         if current_style != other_tool.get() {
             // User manually picked a new tool in the toolbar before using this device
+            trace!(
+                "device tool adopt: device_is_stylus={device_is_stylus}, adopted={current_style:?}, other={:?}",
+                other_tool.get()
+            );
             active_tool.set(current_style);
         } else {
             let target = active_tool.get();
             if current_style != target {
+                trace!(
+                    "device tool switch: device_is_stylus={device_is_stylus}, from={current_style:?} -> to={target:?}"
+                );
                 widget_flags |= canvas.engine_mut().change_pen_style(target);
             }
         }
